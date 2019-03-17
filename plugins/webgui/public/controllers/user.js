@@ -46,7 +46,7 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       name: '订单',
       icon: 'attach_money',
       click: 'user.order',
-      hide: true,
+      hide: false,
     }, {
       name: '设置',
       icon: 'settings',
@@ -351,17 +351,30 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
             `Endpoint = ${server.host}:${server.wgPort}`,
             `AllowedIPs = 0.0.0.0/0`,
           ].join('\n');
+        } else if (account.connType == "SSR") {
+          return 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + (account.protocol_param ? urlsafeBase64(account.protocol_param) : '') + '&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
         } else {
           return 'ss://' + base64Encode(server.method + ':' + account.password + '@' + server.host + ':' + (account.port + server.shift)) + '#' + encodeURIComponent(server.comment);
         }
       };
+      const method = ['aes-256-gcm', 'chacha20-ietf-poly1305', 'aes-128-gcm', 'aes-192-gcm', 'xchacha20-ietf-poly1305'];
       $scope.SSRAddress = (server, account) => {
-        let str = 'ssr://' + urlsafeBase64(server.host + ':' + account.port + ':origin:' + server.method + ':plain:' + urlsafeBase64(account.password) + '/?obfsparam=&remarks=' + urlsafeBase64(server.comment));
+        let str = '';
+        if (account.connType == "SSR") {
+          str = 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + (account.protocol_param ? urlsafeBase64(account.protocol_param) : '') + '&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
+        } else {
+          let index = method.indexOf(server.method);
+          if (index != -1) {
+            return "";
+          }
+          str = 'ssr://' + urlsafeBase64(server.host + ':' + account.port + ':origin:' + server.method + ':plain:' + urlsafeBase64(account.password) + '/?obfsparam=&remarks=' + urlsafeBase64(server.comment));
+        }
         return str;
       };
       const config = configManager.getConfig();
       $scope.shadowrocket = subscribe => {
-        let base64 = urlsafeBase64(`${config.site}/api/user/account/subscribe/${subscribe}?type=shadowrocket&ip=0${config.hideFlow?'':'&flow=1'}`);
+        let rss = config.rss || `${config.site}/api/user/account/subscribe`;
+        let base64 = urlsafeBase64(`${rss}/${subscribe}?type=shadowrocket&ip=0${config.hideFlow ? '' : '&flow=1'}`);
         let remarks = base64Encode(config.site.split('//')[1] || config.site);//config.title
         let str = `shadowrocket://add/sub://${base64}?remarks=${remarks}`;
         return str;
@@ -454,8 +467,11 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
         }
       };
       $scope.showQrcodeDialog = (server, account) => {
-        const ssAddress = $scope.createQrCode(server, account);
-        const ssrAddress = $scope.SSRAddress(server, account);
+        let ssAddress = $scope.createQrCode(server, account);
+        let ssrAddress = $scope.SSRAddress(server, account);
+        if (account.connType == "SSR") {
+          ssAddress = '';
+        }
         qrcodeDialog.show(server.name, ssAddress, ssrAddress);
       };
       $scope.cycleStyle = account => {
@@ -507,6 +523,9 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       };
       $scope.toMac = () => {
         $state.go('user.macAddress');
+      };
+      $scope.toConnType = () => {
+        $state.go('user.connType');
       };
     }
   ])
@@ -599,5 +618,68 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
         });
       };
       getMacAccount();
+    }
+  ])
+  .controller('ConnTypeController', ['$scope', '$state', 'userApi', 'alertDialog', '$http', '$localStorage',
+    ($scope, $state, userApi, alertDialog, $http, $localStorage) => {
+      $scope.setTitle('连接方式');
+      $scope.initloading = true;
+      $scope.setMenuButton('arrow_back', 'user.settings');
+      $scope.typeList = ['SS', 'SSR'];
+      $scope.protocolList = ['auth_chain_a', 'auth_aes128_md5', 'auth_aes128_sha1'];
+      $scope.obfsList = ['http_simple', 'http_post', 'tls1.2_ticket_auth'];
+      $scope.methods = [
+        'aes-256-cfb',
+        'aes-192-cfb',
+        'aes-128-cfb',
+        'aes-256-ctr',
+        'aes-192-ctr',
+        'aes-128-ctr',
+        'camellia-256-cfb',
+        'camellia-192-cfb',
+        'camellia-128-cfb',
+        'rc4-md5',
+        'bf-cfb',
+        'salsa20',
+        'chacha20',
+        'chacha20-ietf'
+      ];
+      $scope.$watch('data.account', () => {
+        if ($scope.accounts) {
+          let item = $scope.accounts.find(x => x.id == $scope.data.account);
+          init(item);
+        }
+      });
+      const init = (item) => {
+        $scope.data = {
+          account: item.id,
+          connType: item.connType || "SS",
+          method: item.method || 'chacha20-ietf',
+          protocol: item.protocol || 'auth_aes128_md5',
+          protocol_param: item.protocol_param,
+          obfs: item.obfs || 'http_simple',
+          obfs_param: item.obfs_param || 'download.windowsupdate.com'
+        };
+      }
+      userApi.getUserAccount().then(success => {
+        $scope.initloading = false;
+        $scope.accounts = success.account;
+        if (success.account.length > 0) {
+          let item = success.account[0];
+          init(item);
+        }
+        $scope.isUserLoading = false;
+      });
+      $scope.confirm = () => {
+        alertDialog.loading();
+        $http.put('/api/user/setConnType/' + $scope.data.account, $scope.data).then(success => {
+          alertDialog.show(`设置成功，请重新添加订阅后等待两分钟，再使用${$scope.data.connType}客户端连接`, '确定')
+            .then(() => {
+
+            })
+        }).catch(err => {
+          alertDialog.show('设置失败', '确定');
+        });
+      };
     }
   ]);

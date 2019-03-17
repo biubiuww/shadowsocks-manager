@@ -30,6 +30,9 @@ const addAccount = async (type, options) => {
   if (type === 6 || type === 7) {
     type = 3;
   }
+  const connType = await knex('webguiSetting').where({
+    key: 'account'
+  }).then(s => s[0]).then(s => JSON.parse(s.value).connType || '');
   if (type === 1) {
     const [accountId] = await knex('account_plugin').insert({
       type,
@@ -42,6 +45,12 @@ const addAccount = async (type, options) => {
       server: options.server ? options.server : null,
       autoRemove: 0,
       key,
+      connType: connType,
+      method: 'chacha20-ietf',
+      protocol: 'auth_aes128_md5',
+      protocol_param: '',
+      obfs: 'http_simple',
+      obfs_param: 'download.windowsupdate.com',
     });
     await accountFlow.add(accountId);
     return accountId;
@@ -65,6 +74,12 @@ const addAccount = async (type, options) => {
       multiServerFlow: options.multiServerFlow || 0,
       active: options.active,
       key,
+      connType: connType,
+      method: 'chacha20-ietf',
+      protocol: 'auth_aes128_md5',
+      protocol_param: '',
+      obfs: 'http_simple',
+      obfs_param: 'download.windowsupdate.com',
     });
     await accountFlow.add(accountId);
     return accountId;
@@ -108,6 +123,12 @@ const getAccount = async (options = {}) => {
     'account_plugin.active',
     'user.id as userId',
     'user.email as user',
+    'account_plugin.connType as connType',
+    'account_plugin.method as method',
+    'account_plugin.protocol as protocol',
+    'account_plugin.protocol_param as protocol_param',
+    'account_plugin.obfs as obfs',
+    'account_plugin.obfs_param as obfs_param'
   ])
     .leftJoin('user', 'user.id', 'account_plugin.userId')
     .where(where)
@@ -270,6 +291,9 @@ const changePassword = async (id, password) => {
   await knex('account_plugin').update({
     password,
   }).where({ id });
+  await knex('ssr_user').update({
+    passwd: password,
+  }).where({ accountId: id });
   await accountFlow.pwd(id, password);
   return;
 };
@@ -905,6 +929,7 @@ const getAccountAndPaging = async (opt) => {
     'account_plugin.autoRemoveDelay',
     'account_plugin.multiServerFlow',
     'account_plugin.active',
+    'account_plugin.connType',
     'user.id as userId',
     'user.email as user',
   ])
@@ -993,6 +1018,33 @@ const getAccountAndPaging = async (opt) => {
     account: result,
   };
 };
+//设置连接方式
+const setConnType = async (options) => {
+  const accountInfo = await getAccount({ id: options.accountId }).then(s => s[0]);
+  await knex('account_plugin').update({
+    connType: options.connType,
+    method: options.method,
+    protocol: options.protocol,
+    protocol_param: options.protocol_param,
+    obfs: options.obfs,
+    obfs_param: options.obfs_param
+  }).where({ id: accountInfo.id });
+  if (options.connType == "SSR") {
+    await knex('ssr_user').update({
+      enable: 1,
+      method: options.method,
+      protocol: options.protocol,
+      protocol_param: options.protocol_param,
+      obfs: options.obfs,
+      obfs_param: options.obfs_param
+    }).where({ id: accountInfo.id });
+  } else {
+    await knex('ssr_user').update({
+      enable: 0
+    }).where({ id: accountInfo.id });
+  }
+  await accountFlow.edit(accountInfo.id);
+};
 
 exports.addAccount = addAccount;
 exports.getAccount = getAccount;
@@ -1011,6 +1063,7 @@ exports.addAccountTime = addAccountTime;
 
 exports.banAccount = banAccount;
 exports.getBanAccount = getBanAccount;
+exports.setConnType = setConnType;
 
 exports.getAccountForSubscribe = getAccountForSubscribe;
 

@@ -172,6 +172,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
       if (!isSubscribeOn) { return res.status(404).end(); }
       const subscribeAccount = await account.getAccountForSubscribe(token, ip);
       for (const s of subscribeAccount.server) {
+        //s.comment = ((s.status != -1 && s.isGfw) ? '[被墙]' : '') + s.comment;
         s.host = await getAddress(s.host, +resolveIp);
       }
       const baseSetting = await knex('webguiSetting').where({
@@ -210,6 +211,15 @@ exports.getSubscribeAccountForUser = async (req, res) => {
           traffic_total: accountInfo.type == 1 || config.plugins.webgui.hideFlow ? 500 : ((accountInfo.data.flow + accountInfo.data.flowPack) / 1000000000).toFixed(2),
           expiry: accountInfo.type == 1 ? '2099-12-31 23:59:59' : moment(accountInfo.data.expire).format("YYYY-MM-DD HH:mm:ss")
         };
+        if (accountInfo.connType == "SSR") {
+          subscribeAccount.server = [{
+            method: 'chacha20',
+            host: '127.0.0.1',
+            shift: 0,
+            scale: 100,
+            comment: 'SSR模式下不支持SSD,请使用SSR客户端'
+          }];
+        }
         let servers = subscribeAccount.server.map((s, index) => {
           return {
             id: index,//这是客户端排序的顺序
@@ -244,12 +254,20 @@ exports.getSubscribeAccountForUser = async (req, res) => {
           subscribeAccount.server.unshift(insertFlow);
         }
         if (type === 'clash') {
+          if (accountInfo.connType == "SSR") {
+            subscribeAccount.server = [{
+              method: 'chacha20',
+              host: '127.0.0.1',
+              shift: 0,
+              comment: 'SSR模式下不支持clash,请使用SSR客户端'
+            }];
+          }
           const yaml = require('js-yaml');
           const clashConfig = appRequire('plugins/webgui/server/clash');
           clashConfig.Proxy = subscribeAccount.server.map(server => {
             return {
               cipher: server.method,
-              name: server.subscribeName || server.name,
+              name: server.subscribeName || server.comment || server.name,
               password: subscribeAccount.account.password,
               port: subscribeAccount.account.port + server.shift,
               server: server.host,
@@ -260,20 +278,28 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             name: 'Proxy',
             type: 'select',
             proxies: subscribeAccount.server.map(server => {
-              return server.subscribeName || server.name;
+              return server.subscribeName || server.comment || server.name;
             }),
           };
           return res.send(yaml.safeDump(clashConfig));
         }
-        result = subscribeAccount.server.map(s => {
-          if (type === 'shadowrocket') {
-            return 'ss://' + Buffer.from(s.method + ':' + subscribeAccount.account.password + '@' + s.host + ':' + (subscribeAccount.account.port + + s.shift)).toString('base64') + '#' + encodeURIComponent((s.comment || '这里显示备注'));
-          } else if (type === 'potatso') {
-            return 'ss://' + Buffer.from(s.method + ':' + subscribeAccount.account.password + '@' + s.host + ':' + (subscribeAccount.account.port + + s.shift)).toString('base64') + '#' + (s.comment || '这里显示备注');
-          } else if (type === 'ssr') {
-            return 'ssr://' + urlsafeBase64(s.host + ':' + (subscribeAccount.account.port + s.shift) + ':origin:' + s.method + ':plain:' + urlsafeBase64(subscribeAccount.account.password) + '/?obfsparam=&remarks=' + urlsafeBase64(s.comment || '这里显示备注') + '&group=' + urlsafeBase64(baseSetting.title));
-          }
-        }).join('\r\n');
+        const method = ['aes-256-gcm', 'chacha20-ietf-poly1305', 'aes-128-gcm', 'aes-192-gcm', 'xchacha20-ietf-poly1305'];
+        if (accountInfo.connType == "SSR") {
+          result = subscribeAccount.server.map(s => {
+            return 'ssr://' + urlsafeBase64(s.host + ':' + (accountInfo.port + s.shift) + ':' + accountInfo.protocol + ':' + accountInfo.method + ':' + accountInfo.obfs + ':' + urlsafeBase64(accountInfo.password) + '/?obfsparam=' + (accountInfo.obfs_param ? urlsafeBase64(accountInfo.obfs_param) : '') + '&protoparam=' + (accountInfo.protocol_param ? urlsafeBase64(accountInfo.protocol_param) : '') + '&remarks=' + urlsafeBase64(s.comment || '这里显示备注') + '&group=' + urlsafeBase64(baseSetting.title));
+          }).join('\r\n');
+        } else {
+          result = subscribeAccount.server.map(s => {
+            if (type === 'shadowrocket') {
+              return 'ss://' + Buffer.from(s.method + ':' + accountInfo.password + '@' + s.host + ':' + (accountInfo.port + + s.shift)).toString('base64') + '#' + encodeURIComponent((s.comment || '这里显示备注'));
+            } else if (type === 'potatso') {
+              return 'ss://' + Buffer.from(s.method + ':' + accountInfo.password + '@' + s.host + ':' + (accountInfo.port + + s.shift)).toString('base64') + '#' + (s.comment || '这里显示备注');
+            } else if (type === 'ssr') {
+              let index = method.indexOf(s.method);
+              return 'ssr://' + urlsafeBase64(s.host + ':' + (accountInfo.port + s.shift) + ':origin:' + s.method + ':plain:' + urlsafeBase64(accountInfo.password) + '/?obfsparam=&remarks=' + urlsafeBase64((index == -1 ? '' : '[不支持SSR]') + s.comment || '这里显示备注') + '&group=' + urlsafeBase64(baseSetting.title));
+            }
+          }).join('\r\n');
+        }
         return res.send(Buffer.from(result).toString('base64'));
       }
     }

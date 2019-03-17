@@ -42,20 +42,24 @@ const day_push = async () => {
   const total_info = await knex('account_plugin').countDistinct('id as count').countDistinct('subscribe as sub_count').then(success => success[0]);
   //当日使用端口数
   const today_info = await knex('saveFlow').countDistinct('accountId as count').whereBetween('time', [begin_time, end_time]).then(success => success[0]);
-
+  //总流量
   //各个服务器使用情况
   const server_info = await knex('saveFlow')
     .leftJoin('server', 'saveFlow.id', 'server.id')
     .countDistinct('saveFlow.accountId as count')
-    .sum('saveFlow.flow as flow')
+    .sum('saveFlow.flow as sumflow')
     .select('server.name')
     .groupBy('saveFlow.id')
-    .orderBy('server.comment')
     .whereBetween('time', [begin_time, end_time])
+    .orderBy('sumflow','desc')
     .then(success => {
-      return success.map(item => {
-        return `${item.name} 账号数:${item.count} 总流量:${flowNumber(item.flow)}`;
-      }).join('\n')
+      let allflow = 0;
+      let list = '';
+      for (let item of success) {
+        allflow += item.sumflow || 0;
+        list += `${item.name} 账号数:${item.count} 总流量:${flowNumber(item.sumflow)}\n`;
+      }
+      return { allflow: allflow, list: list }
     });
   //订单情况
   const pay_info = await knex('alipay')
@@ -64,17 +68,20 @@ const day_push = async () => {
     .whereBetween('createTime', [begin_time, end_time])
     .where('status', 'FINISH')
     .then(success => success[0]);
-  await push(`主人，晚上好！`);
-  await push(`今天共注册了 ${newuser} 个新用户，共有 ${login} 个人登录了网站`);
-  await push(`截止目前，共有账号数 ${total_info.count} 个`);
-  await push(`今天，共有 ${today_info.count} 个账号使用服务`);
-  await push(`各个服务器使用情况：\n${server_info}`);
-  await push(`今天共产生 ${pay_info.count} 个订单，共筹得 ${(pay_info.amount || 0).toFixed(2)} 元`);
+  let msg = `主人，晚上好！`;
+  msg += `\n截止目前，共有账号数 ${total_info.count} 个`;
+  msg += `\n今天:`;
+  msg += `\n共注册了 ${newuser} 个新用户`;
+  msg += `\n共有 ${login} 个人登录了网站`;
+  msg += `\n共产生 ${pay_info.count} 个订单，筹得 ${(pay_info.amount || 0).toFixed(2)} 元`;
+  msg += `\n共有 ${today_info.count} 个账号使用了 ${flowNumber(server_info.allflow)} 流量`;
+  msg += `\n各服务器使用情况：\n${server_info.list}`;
+  await push(msg);
 }
 cron.cron(() => {
   if (isTelegram) {
     day_push();
   }
-}, 'day_push', '20 22 * * *', 24 * 3600);
+}, 'day_push', '30 22 * * *', 24 * 3600);
 
 exports.push = push;

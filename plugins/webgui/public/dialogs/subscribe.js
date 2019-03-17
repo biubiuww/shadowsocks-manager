@@ -3,7 +3,7 @@ const window = require('window');
 const cdn = window.cdn || '';
 
 app.factory('subscribeDialog', ['$mdDialog', '$http', ($mdDialog, $http) => {
-  const publicInfo = { linkType: 'shadowrocket', ip: '0', flow: '0' };
+  const publicInfo = { linkType: 'shadowrocket', ip: '0', flow: '1' };
   const hide = () => {
     return $mdDialog.hide()
       .then(success => {
@@ -37,22 +37,31 @@ app.factory('subscribeDialog', ['$mdDialog', '$http', ($mdDialog, $http) => {
     bindToController: true,
     controller: ['$scope', '$mdMedia', '$mdDialog', 'bind', 'configManager', '$mdToast', function ($scope, $mdMedia, $mdDialog, bind, configManager, $mdToast) {
       $scope.publicInfo = bind;
-      $scope.publicInfo.types = [
-        'shadowrocket', 'potatso', 'ssr', 'ssd', 'clash',
-      ];
+      $scope.publicInfo.types = [];
       const config = configManager.getConfig();
+      const rss = config.rss || `${config.site}/api/user/account/subscribe`;
       $scope.hideFlow = config.hideFlow;
-      $scope.changeLinkType = () => {
-        $scope.publicInfo.subscribeLink = `${config.site}/api/user/account/subscribe/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
-      };
+      $scope.publicInfo.flow = 1;
       $scope.publicInfo.getSubscribe().then(success => {
+        if (success.data.connType == "SSR") {
+          $scope.publicInfo.types = [
+            'ssr',
+          ];
+        } else {
+          $scope.publicInfo.types = [
+            'shadowrocket', 'ssr', 'ssd', 'potatso', 'clash',
+          ];
+        }
         $scope.publicInfo.token = success.data.subscribe;
-        $scope.publicInfo.subscribeLink = `${config.site}/api/user/account/subscribe/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
+        $scope.publicInfo.subscribeLink = `${rss}/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
       });
+      $scope.changeLinkType = () => {
+        $scope.publicInfo.subscribeLink = `${rss}/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
+      };
       $scope.publicInfo.updateLink = () => {
         $scope.publicInfo.updateSubscribe().then(success => {
           $scope.publicInfo.token = success.data.subscribe;
-          $scope.publicInfo.subscribeLink = `${config.site}/api/user/account/subscribe/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
+          $scope.publicInfo.subscribeLink = `${rss}/${$scope.publicInfo.token}?type=${$scope.publicInfo.linkType}&ip=${$scope.publicInfo.ip}&flow=${$scope.publicInfo.flow}`;
         });
       };
       $scope.toast = () => {

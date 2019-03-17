@@ -26,7 +26,8 @@ If you want to use the old version, please switch to [this branch](https://githu
 
 ## Dependencies
 
-Node.js 10.*
+* Node.js 10.*
+* Redis
 
 ## Install
 
@@ -90,10 +91,13 @@ ssserver -m aes-256-cfb -p 12345 -k abcedf --manager-address 127.0.0.1:6001
 
   shadowsocks:
     address: 127.0.0.1:6001
+    initport: 65534
   manager:
     address: 0.0.0.0:4001
     password: '123456'
   db: 'ss.sqlite'
+
+  initport 参数选填，为一个服务器多个s端而配置
   ```
 
   If you want to use MySQL, the `db` must like this:
@@ -140,7 +144,6 @@ The listening address in `--manager-address` of step 1 and in `shadowsocks -> ad
 
 [telegram](https://github.com/shadowsocks/shadowsocks-manager/blob/master/plugins/telegram/README.md)  
 [freeAccount](https://github.com/shadowsocks/shadowsocks-manager/blob/master/plugins/freeAccount/README.md)  
-[freeAccountMiner](https://github.com/shadowsocks/shadowsocks-manager/blob/master/plugins/freeAccountMiner/README.md)  
 [webgui](https://github.com/shadowsocks/shadowsocks-manager/blob/master/plugins/webgui/README.md)  
 
 ### Parameter
@@ -170,7 +173,7 @@ First, ssmgr will read the config file in `--config`, and other parameters(`-det
 
 If your want to help to translate it to other languages, please edit files [here](https://github.com/shadowsocks/shadowsocks-manager/tree/dev/plugins/webgui/public/translate) and give me a pull request.
 
-### Telegram
+### Telegram Group
 Join the group if you have some problem: [https://t.me/ssmgr](https://t.me/ssmgr)
 
 ### VPS recommendation
