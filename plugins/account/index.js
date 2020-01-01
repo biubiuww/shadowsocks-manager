@@ -2,6 +2,7 @@ const knex = appRequire('init/knex').knex;
 const serverManager = appRequire('plugins/flowSaver/server');
 const manager = appRequire('services/manager');
 const crypto = require('crypto');
+const UUID = require('uuid');
 const macAccount = appRequire('plugins/macAccount/index');
 const orderPlugin = appRequire('plugins/webgui_order');
 const accountFlow = appRequire('plugins/account/accountFlow');
@@ -33,54 +34,62 @@ const addAccount = async (type, options) => {
   const connType = await knex('webguiSetting').where({
     key: 'account'
   }).then(s => s[0]).then(s => JSON.parse(s.value).connType || '');
+
+  //默认
+  if (connType === 'SS') {
+    options.method = 'xchacha20-ietf-poly1305';
+    options.protocol = 'origin'
+    options.protocol_param = ''
+    options.obfs = 'plain'
+    options.obfs_param = ''
+  }
+  if (connType === 'SSR') {
+    options.method = 'chacha20-ietf';
+    options.protocol = 'auth_aes128_md5'
+    options.protocol_param = ''
+    options.obfs = 'http_simple'
+    options.obfs_param = 'download.windowsupdate.com'
+  }
+  if (options.is_multi_user > 0) {
+    options.obfs_param = 'catalog.update.microsoft.com'
+  }
+  let entity = {
+    type,
+    userId: options.user,
+    port: options.port,
+    subscribe: crypto.randomBytes(8).toString('hex'),
+    password: options.password,
+    status: 0,
+    server: options.server ? options.server : null,
+    key,
+    connType: connType,
+    method: options.method,
+    protocol: options.protocol,
+    protocol_param: options.protocol_param,
+    obfs: options.obfs,
+    obfs_param: options.obfs_param,
+    is_multi_user: options.is_multi_user || 0,
+    connector: options.connector,
+    uuid: UUID.v1()
+  }
   if (type === 1) {
-    const [accountId] = await knex('account_plugin').insert({
-      type,
-      orderId: 0,
-      userId: options.user,
-      port: options.port,
-      subscribe: crypto.randomBytes(16).toString('hex'),
-      password: options.password,
-      status: 0,
-      server: options.server ? options.server : null,
-      autoRemove: 0,
-      key,
-      connType: connType,
-      method: 'chacha20-ietf',
-      protocol: 'auth_aes128_md5',
-      protocol_param: '',
-      obfs: 'http_simple',
-      obfs_param: 'download.windowsupdate.com',
-    });
+    entity.orderId = 0;
+    entity.autoRemove = 0
+    const [accountId] = await knex('account_plugin').insert(entity);
     await accountFlow.add(accountId);
     return accountId;
   } else if (type >= 2 && type <= 5) {
-    const [accountId] = await knex('account_plugin').insert({
-      type,
-      orderId: options.orderId || 0,
-      userId: options.user,
-      port: options.port,
-      subscribe: crypto.randomBytes(16).toString('hex'),
-      password: options.password,
-      data: JSON.stringify({
-        create: options.time || Date.now(),
-        flow: options.flow || 1 * 1000 * 1000 * 1000,
-        limit: options.limit || 1,
-      }),
-      status: 0,
-      server: options.server ? options.server : null,
-      autoRemove: options.autoRemove || 0,
-      autoRemoveDelay: options.autoRemoveDelay || 0,
-      multiServerFlow: options.multiServerFlow || 0,
-      active: options.active,
-      key,
-      connType: connType,
-      method: 'chacha20-ietf',
-      protocol: 'auth_aes128_md5',
-      protocol_param: '',
-      obfs: 'http_simple',
-      obfs_param: 'download.windowsupdate.com',
+    entity.orderId = options.orderId || 0;
+    entity.data = JSON.stringify({
+      create: options.time || Date.now(),
+      flow: options.flow || 1 * 1000 * 1000 * 1000,
+      limit: options.limit || 1,
     });
+    entity.autoRemove = options.autoRemove || 0;
+    entity.autoRemoveDelay = options.autoRemoveDelay || 0;
+    entity.multiServerFlow = options.multiServerFlow || 0;
+    entity.active = options.active;
+    const [accountId] = await knex('account_plugin').insert(entity);
     await accountFlow.add(accountId);
     return accountId;
   }
@@ -128,12 +137,23 @@ const getAccount = async (options = {}) => {
     'account_plugin.protocol as protocol',
     'account_plugin.protocol_param as protocol_param',
     'account_plugin.obfs as obfs',
-    'account_plugin.obfs_param as obfs_param'
+    'account_plugin.obfs_param as obfs_param',
+    'account_plugin.lastSubscribeTime as lastSubscribeTime',
+    'account_plugin.uuid',
+    'account_plugin.is_multi_user',
+    'account_plugin.connector'
   ])
     .leftJoin('user', 'user.id', 'account_plugin.userId')
     .where(where)
     .orderByRaw('account_plugin.active,port desc');
   //account = await users.orderBy(sort.split('_')[0], sort.split('_')[1]).limit(pageSize).offset((page - 1) * pageSize);
+  return account;
+};
+const getSingleAccount = async (options = {}) => {
+  //获取单端口账号
+  const account = await knex('account_plugin')
+    .select(['server', 'port', 'password', 'method', 'protocol', 'protocol_param', 'obfs', 'obfs_param', 'is_multi_user'])
+    .where('is_multi_user', '>', 0);
   return account;
 };
 
@@ -143,6 +163,7 @@ const getOnlineAccount = async serverId => {
       'saveFlow.id as serverId',
     ]).countDistinct('saveFlow.accountId as online')
       .where('saveFlow.time', '>', Date.now() - 5 * 60 * 1000)
+      .where('saveFlow.flow', '>', 10000)
       .groupBy('saveFlow.id');
     const result = {};
     for (const online of onlines) {
@@ -159,6 +180,7 @@ const getOnlineAccount = async serverId => {
         .where({ 'saveFlow.id': serverId })
         .whereRaw('saveFlow.accountId = account_plugin.id')
         .where('saveFlow.time', '>', Date.now() - 5 * 60 * 1000)
+        .where('saveFlow.flow', '>', 10000)
     );
   return account.map(m => m.id);
 };
@@ -169,17 +191,17 @@ const delAccount = async id => {
     return Promise.reject('Account id[' + id + '] not found');
   }
   const result = await knex('account_plugin').delete().where({ id });
-  const servers = await knex('server').where({});
-  servers.forEach(server => {
-    manager.send({
-      command: 'del',
-      port: accountInfo.port + server.shift,
-    }, {
-        host: server.host,
-        port: server.port,
-        password: server.password,
-      });
-  });
+  // const servers = await knex('server').where({});
+  // servers.forEach(server => {
+  //   manager.send({
+  //     command: 'del',
+  //     port: accountInfo.port + server.shift,
+  //   }, {
+  //     host: server.host,
+  //     port: server.port,
+  //     password: server.password,
+  //   });
+  // });
   await accountFlow.del(id);
   return result;
 };
@@ -211,22 +233,22 @@ const editAccount = async (id, options) => {
       limit: options.limit || 1,
     });
   }
-  if (options.port) {
-    update.port = +options.port;
-    if (+options.port !== account.port) {
-      const servers = await knex('server').where({});
-      servers.forEach(server => {
-        manager.send({
-          command: 'del',
-          port: account.port + server.shift,
-        }, {
-            host: server.host,
-            port: server.port,
-            password: server.password,
-          });
-      });
-    }
-  }
+  // if (options.port) {
+  //   update.port = +options.port;
+  //   if (+options.port !== account.port) {
+  //     const servers = await knex('server').where({});
+  //     servers.forEach(server => {
+  //       manager.send({
+  //         command: 'del',
+  //         port: account.port + server.shift,
+  //       }, {
+  //         host: server.host,
+  //         port: server.port,
+  //         password: server.password,
+  //       });
+  //     });
+  //   }
+  // }
   await knex('account_plugin').update(update).where({ id });
   await accountFlow.edit(id);
   return;
@@ -288,13 +310,14 @@ const changePassword = async (id, password) => {
     }
     return Promise.reject('account not found');
   });
+  let uuid = UUID.v1();
   await knex('account_plugin').update({
-    password,
+    password, uuid
   }).where({ id });
   await knex('ssr_user').update({
-    passwd: password,
+    passwd: password, uuid: uuid
   }).where({ accountId: id });
-  await accountFlow.pwd(id, password);
+  //await accountFlow.pwd(id, password);
   return;
 };
 
@@ -509,7 +532,7 @@ const setAccountLimit = async (userId, accountId, orderId) => {
       orderId,
       user: userId,
       port,
-      password: Math.random().toString().substr(2, 4),
+      password: Math.ceil(Math.random() * 9) + Math.random().toString().substr(2, 3),//防止密码首位出现0
       time: Date.now(),
       limit,
       flow: orderInfo.flow,
@@ -518,6 +541,7 @@ const setAccountLimit = async (userId, accountId, orderId) => {
       autoRemoveDelay: orderInfo.autoRemoveDelay,
       multiServerFlow: orderInfo.multiServerFlow ? 1 : 0,
       active: orderInfo.active,
+      connector: orderInfo.connector
     });
     return accountId;
   }
@@ -679,7 +703,7 @@ const addAccountTime = async (userId, accountId, accountType, accountPeriod = 1)
       userId,
       server: getPaymentInfo(accountType).server ? JSON.stringify(getPaymentInfo(accountType).server) : null,
       port,
-      password: Math.random().toString().substr(2, 10),
+      password: Math.ceil(Math.random() * 9) + Math.random().toString().substr(2, 3),//防止密码首位出现0
       data: JSON.stringify({
         create: Date.now(),
         flow: getPaymentInfo(accountType).flow * 1000 * 1000,
@@ -830,9 +854,10 @@ const getAccountForSubscribe = async (token, ip) => {
     subscribe: token
   }).then(s => s[0]);
   if (!account) {
-    loginFail(token, ip);
+    //loginFail(token, ip);//由于订阅使用了反向代理，都是同一ip请求
     return Promise.reject('can not find account');
   }
+  await knex('subscribe_log').insert({ accountId: account.id, userId: account.userId, ip: ip, datetime: Date.now() });
   if (account.data) {
     account.data = JSON.parse(account.data);
   } else {
@@ -851,43 +876,49 @@ const getAccountForSubscribe = async (token, ip) => {
 
 const sleep = time => new Promise(resolve => setTimeout(resolve, time));
 
+//取出两个数组中不同的部分
+const getArrDifference = (arr1, arr2) => {
+  return arr1.concat(arr2).filter(function (v, i, arr) {
+    return arr.indexOf(v) === arr.lastIndexOf(v);
+  });
+}
+
 const editMultiAccounts = async (orderId, update) => {
   const accounts = await knex('account_plugin').where({ orderId });
   const updateData = {};
-  for (const account of accounts) {
-    if (update.hasOwnProperty('flow')) {
-      const accountData = JSON.parse(account.data);
-      accountData.flow = update.flow;
-      updateData.data = JSON.stringify(accountData);
-    }
-    if (update.hasOwnProperty('server')) {
-      updateData.server = update.server ? JSON.stringify(update.server) : null;
-    }
-    if (update.hasOwnProperty('autoRemove')) {
-      updateData.autoRemove = update.autoRemove;
-    }
-    if (Object.keys(updateData).length === 0) { break; }
-    await knex('account_plugin').update(updateData).where({ id: account.id });
-    if (updateData.server) {
+  if (update.hasOwnProperty('flow')) {
+    const accountData = JSON.parse(account.data);
+    accountData.flow = update.flow;
+    updateData.data = JSON.stringify(accountData);
+  }
+  if (update.hasOwnProperty('server')) {
+    updateData.server = update.server ? JSON.stringify(update.server) : null;
+  }
+  if (update.hasOwnProperty('autoRemove')) {
+    updateData.autoRemove = update.autoRemove;
+  }
+  if (update.hasOwnProperty('connector')) {
+    updateData.connector = update.connector;
+    await knex('ssr_user').update({ connector: update.connector }).whereIn('accountId', knex('account_plugin').select('id').where({ orderId }))
+  }
+  if (Object.keys(updateData).length > 0) {
+    await knex('account_plugin').update(updateData).where({ orderId })
+    for (const account of accounts) {
       //如果指定了服务器
-      //该账号已经包含的的服务器
-      let servers = await knex('account_flow').select('serverId').where({ accountId: account.id }).then(res => res.map(s => s.serverId));
-      for (let serverId of servers) {
-        //只更新订单中不包含的服务器
-        if (updateData.server.indexOf(serverId) == -1) {
+      if (updateData.server && account.server) {
+        let arr = getArrDifference(update.server, JSON.parse(account.server))
+        if (arr.length > 0) {
+          //只检查有变化的部分
           await knex('account_flow').update({
             nextCheckTime: 400,//优先检查
-          }).where({
-            serverId: serverId,
-            accountId: account.id
-          });
+          }).where({ accountId: account.id }).whereIn('serverId', arr);
         }
+      } else {
+        //如果没有指定服务器，账号下每个服务器都检查一遍
+        //await accountFlow.edit(account.id);
       }
-    } else {
-      //如果没有指定服务器，账号下每个服务器都检查一遍
-      //await accountFlow.edit(account.id);
+      //await sleep(50);
     }
-    await sleep(500);
   }
 };
 
@@ -930,6 +961,8 @@ const getAccountAndPaging = async (opt) => {
     'account_plugin.multiServerFlow',
     'account_plugin.active',
     'account_plugin.connType',
+    'account_plugin.uuid',
+    'account_plugin.connector',
     'user.id as userId',
     'user.email as user',
   ])
@@ -1020,34 +1053,29 @@ const getAccountAndPaging = async (opt) => {
 };
 //设置连接方式
 const setConnType = async (options) => {
-  const accountInfo = await getAccount({ id: options.accountId }).then(s => s[0]);
+  if (options === "SSR" && options.is_multi_user > 0) {
+    options.obfs_param = 'catalog.update.microsoft.com'
+  }
+  let accountInfo = await getAccount({ id: options.accountId }).then(s => s[0]);
+  accountInfo.uuid = accountInfo.uuid || UUID.v1();
   await knex('account_plugin').update({
     connType: options.connType,
     method: options.method,
     protocol: options.protocol,
     protocol_param: options.protocol_param,
     obfs: options.obfs,
-    obfs_param: options.obfs_param
+    obfs_param: options.obfs_param,
+    uuid: accountInfo.uuid
   }).where({ id: accountInfo.id });
-  if (options.connType == "SSR") {
-    await knex('ssr_user').update({
-      enable: 1,
-      method: options.method,
-      protocol: options.protocol,
-      protocol_param: options.protocol_param,
-      obfs: options.obfs,
-      obfs_param: options.obfs_param
-    }).where({ id: accountInfo.id });
-  } else {
-    await knex('ssr_user').update({
-      enable: 0
-    }).where({ id: accountInfo.id });
-  }
-  await accountFlow.edit(accountInfo.id);
+  //直接删除
+  await knex('ssr_user').where({ accountId: accountInfo.id }).del();
+  //优先检查 再添加
+  await knex('account_flow').update({ nextCheckTime: 100 }).where({ accountId: accountInfo.id });
 };
 
 exports.addAccount = addAccount;
 exports.getAccount = getAccount;
+exports.getSingleAccount = getSingleAccount;
 exports.delAccount = delAccount;
 exports.editAccount = editAccount;
 exports.editAccountTime = editAccountTime;

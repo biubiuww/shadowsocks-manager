@@ -1,7 +1,7 @@
 const app = angular.module('app');
 
-app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', '$http', '$interval', '$localStorage', 'userApi', 'configManager',
-  ($scope, $mdMedia, $mdSidenav, $state, $http, $interval, $localStorage, userApi, configManager) => {
+app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', '$http', '$interval', '$localStorage', 'userApi', 'configManager', '$window',
+  ($scope, $mdMedia, $mdSidenav, $state, $http, $interval, $localStorage, userApi, configManager, $window) => {
     const config = configManager.getConfig();
     if (config.status === 'admin') {
       return $state.go('admin.index');
@@ -61,6 +61,9 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           $localStorage.home = {};
           $localStorage.user = {};
           configManager.deleteConfig();
+          if (config.crisp) {
+            $crisp.push(['do', 'session:reset', [false]]);
+          }
           $state.go('home.index');
         });
       },
@@ -149,11 +152,49 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
         };
       });
     };
+    document.addEventListener('crispReady', function (e) {
+      $crisp.push(['set', 'session:data', [[['user-type', 'ssmgr-user']]]]);
+      $crisp.push(['set', 'session:data', [[['user-agent', navigator.userAgent]]]]);
+      $crisp.push(['on', 'message:received', () => {
+        $crisp.push(['do', 'chat:open']);
+        $crisp.push(['do', 'chat:show']);
+      }]);
+      if (!$scope.crispToken) {
+        $scope.crispToken = $crisp.get('session:identifier');
+        $http.post('/api/user/crisp', { token: $scope.crispToken });
+      }
+    }, false);
+    const startCrisp = () => {
+      $crisp.push(['do', 'chat:hide']);
+      $crisp.push(['on', 'chat:closed', () => {
+        $crisp.push(['do', 'chat:hide']);
+      }]);
+      (function () {
+        d = document;
+        s = d.createElement('script');
+        s.src = 'https://client.crisp.chat/l.js';
+        s.async = 1;
+        d.getElementsByTagName('head')[0].appendChild(s);
+      })();
+    };
+    if (config.crisp) {
+      $http.get('/api/user/crisp').then(success => {
+        $scope.crispToken = success.data.token;
+        $crisp.push(['set', 'user:email', config.email]);
+        if (!$scope.crispToken) {
+          startCrisp();
+        } else {
+          window.CRISP_TOKEN_ID = $scope.crispToken;
+          startCrisp();
+        }
+      });
+    }
   }
 ])
   .controller('UserIndexController', ['$scope', '$state', 'userApi', 'markdownDialog', '$sessionStorage', 'autopopDialog',
     ($scope, $state, userApi, markdownDialog, $sessionStorage, autopopDialog) => {
       $scope.setTitle('首页');
+      $scope.notices = [];
       userApi.getNotice().then(success => {
         $scope.notices = success;
         if (!$sessionStorage.showNotice) {
@@ -164,6 +205,9 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           }
         }
       });
+      userApi.getUsage().then(success => {
+        $scope.usage = success;
+      });
       $scope.toMyAccount = () => {
         $state.go('user.account');
       };
@@ -173,24 +217,34 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       $scope.toTelegram = () => {
         $state.go('user.telegram');
       };
+      $scope.toNotice = () => {
+        $state.go('user.notice');
+      };
       $scope.toRef = () => {
         $state.go('user.ref');
       };
+      $scope.toCrisp = () => {
+        $crisp.push(['do', 'chat:open']);
+        $crisp.push(['do', 'chat:show']);
+      };
     }
   ])
-  .controller('UserAccountController', ['$scope', '$http', '$mdMedia', 'userApi', 'alertDialog', 'payDialog', 'qrcodeDialog', '$interval', '$localStorage', 'changePasswordDialog', 'payByGiftCardDialog', 'subscribeDialog', '$q', '$state', '$timeout', 'configManager', 'wireGuardConfigDialog',
-    ($scope, $http, $mdMedia, userApi, alertDialog, payDialog, qrcodeDialog, $interval, $localStorage, changePasswordDialog, payByGiftCardDialog, subscribeDialog, $q, $state, $timeout, configManager, wireGuardConfigDialog) => {
+  .controller('UserAccountController', ['$scope', '$http', '$mdMedia', 'userApi', '$mdDialog', 'payDialog', 'qrcodeDialog', '$interval', '$localStorage', 'changePasswordDialog', 'payByGiftCardDialog', 'subscribeDialog', 'accountServerDialog', 'accountInfoDialog', '$q', '$state', '$timeout', 'configManager', 'wireGuardConfigDialog',
+    ($scope, $http, $mdMedia, userApi, $mdDialog, payDialog, qrcodeDialog, $interval, $localStorage, changePasswordDialog, payByGiftCardDialog, subscribeDialog, accountServerDialog, accountInfoDialog, $q, $state, $timeout, configManager, wireGuardConfigDialog) => {
+      const config = $scope.config;
       $scope.setTitle('账号');
       $scope.setMenuSearchButton('search');
       $scope.currentPage = 1;
-      const getPageSize = 6;
+      const getPageSize = 18;
+      //是否加载中
       $scope.isUserLoading = false;
       $scope.isUserPageFinish = false;
       $scope.account = [];
       $scope.setFabButton($scope.config.multiAccount ? () => {
         $scope.createOrder();
       } : null);
-      $scope.flexGtSm = 100;
+      $scope.flexGtSm1 = 100;
+      $scope.flexGtSm2 = 100;
       if (!$localStorage.user.serverInfo) {
         $localStorage.user.serverInfo = {
           time: Date.now(),
@@ -207,14 +261,21 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       $scope.account = $localStorage.user.accountInfo.data;
       $scope.accountResult = [];
       $scope.accountList = [];
-      if ($scope.account.length >= 2) {
-        $scope.flexGtSm = 50;
-      }
+      $scope.singleAccounts = [];
+      //获取单端口
+      $http.get('/api/user/singleaccount').then(success => {
+        if (success.data.length) {
+          $scope.singleAccounts = success.data;
+        };
+      });
 
       const setAccountServerList = (account, server) => {
         account.forEach(a => {
           a.serverList = $scope.servers.filter(f => {
             return !a.server || a.server.indexOf(f.id) >= 0;
+          });
+          a.unServerList = $scope.servers.filter(f => {
+            return a.server && a.server.indexOf(f.id) < 0;
           });
         });
       };
@@ -247,6 +308,8 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       const getUserAccountInfo = () => {
         $scope.isUserLoading = true;
         userApi.getUserAccount().then(success => {
+          //success.servers = JSON.parse(new Buffer(success.servers, 'base64').toString());
+          //console.log('success.servers', success.servers)
           $scope.servers = success.servers;
           if (success.account.map(m => m.id).join('') === $scope.account.map(m => m.id).join('')) {
             success.account.forEach((a, index) => {
@@ -271,8 +334,14 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           $localStorage.user.serverInfo.time = Date.now();
           $localStorage.user.accountInfo.data = success.account;
           $localStorage.user.accountInfo.time = Date.now();
-          if ($scope.account.length >= 2) {
-            $scope.flexGtSm = 50;
+
+          if ($scope.account.length == 2) {
+            $scope.flexGtSm1 = 50;
+            $scope.flexGtSm2 = 50;
+          }
+          if ($scope.account.length > 2) {
+            $scope.flexGtSm1 = 50;
+            $scope.flexGtSm2 = 33;
           }
           $scope.accountResult = angular.copy($scope.account)
           $scope.accountList = [];
@@ -328,55 +397,77 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
         }
         paging();
       };
-      const base64Encode = str => {
-        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
-          return String.fromCharCode('0x' + p1);
-        }));
-      };
+      // const base64Encode = str => {
+      //   return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
+      //     return String.fromCharCode('0x' + p1);
+      //   }));
+      // };
       const urlsafeBase64 = str => {
         return Buffer.from(str).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
       };
-      $scope.createQrCode = (server, account) => {
-        if (!server) { return ''; }
-        if (server.type === 'WireGuard') {
-          const a = account.port % 254;
-          const b = (account.port - a) / 254;
-          return [
-            '[Interface]',
-            `Address = ${server.net.split('.')[0]}.${server.net.split('.')[1]}.${b}.${a + 1}/32`,
-            `PrivateKey = ${account.privateKey}`,
-            'DNS = 8.8.8.8',
-            '[Peer]',
-            `PublicKey = ${server.key}`,
-            `Endpoint = ${server.host}:${server.wgPort}`,
-            `AllowedIPs = 0.0.0.0/0`,
-          ].join('\n');
-        } else if (account.connType == "SSR") {
-          return 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + (account.protocol_param ? urlsafeBase64(account.protocol_param) : '') + '&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
-        } else {
-          return 'ss://' + base64Encode(server.method + ':' + account.password + '@' + server.host + ':' + (account.port + server.shift)) + '#' + encodeURIComponent(server.comment);
-        }
-      };
-      const method = ['aes-256-gcm', 'chacha20-ietf-poly1305', 'aes-128-gcm', 'aes-192-gcm', 'xchacha20-ietf-poly1305'];
-      $scope.SSRAddress = (server, account) => {
+      // $scope.createQrCode = (server, account) => {
+      //   if (!server) { return ''; }
+      //   if (server.type === 'WireGuard') {
+      //     const a = account.port % 254;
+      //     const b = (account.port - a) / 254;
+      //     return [
+      //       '[Interface]',
+      //       `Address = ${server.net.split('.')[0]}.${server.net.split('.')[1]}.${b}.${a + 1}/32`,
+      //       `PrivateKey = ${account.privateKey}`,
+      //       'DNS = 8.8.8.8',
+      //       '[Peer]',
+      //       `PublicKey = ${server.key}`,
+      //       `Endpoint = ${server.host}:${server.wgPort}`,
+      //       `AllowedIPs = 0.0.0.0/0`,
+      //     ].join('\n');
+      //   } else if (account.connType == "SSR") {
+      //     //单端口模式
+      //     if (config.singleMode == 'ssr1port' || server.singleMode == 'ssr1port') {
+      //       let port = server.singlePort.split(',')[0];
+      //       return 'ssr://' + urlsafeBase64(server.host + ':' + (port) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64('balala') + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + urlsafeBase64((account.port + server.shift) + ':' + account.password) + '&remarks=' + urlsafeBase64((server.comment || '这里显示备注') + ' - ' + port));
+      //     } else {
+      //       return 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
+      //     }
+      //   } else {
+      //     return 'ss://' + base64Encode(server.method + ':' + account.password + '@' + server.host + ':' + (account.port + server.shift)) + '#' + encodeURIComponent(server.comment);
+      //   }
+      // };
+      // const method = ['aes-256-gcm', 'chacha20-ietf-poly1305', 'aes-128-gcm', 'aes-192-gcm', 'xchacha20-ietf-poly1305'];
+      // $scope.SSRAddress = (server, account) => {
+      //   let str = '';
+      //   if (account.connType == "SSR") {
+      //     //单端口模式
+      //     if (config.singleMode == 'ssr1port' || server.singleMode == 'ssr1port') {
+      //       let port = server.singlePort.split(',')[0];
+      //       return 'ssr://' + urlsafeBase64(server.host + ':' + (port) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64('balala') + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + urlsafeBase64((account.port + server.shift) + ':' + account.password) + '&remarks=' + urlsafeBase64((server.comment || '这里显示备注') + ' - ' + port));
+      //     } else {
+      //       return 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
+      //       //' + (account.protocol_param ? urlsafeBase64(account.protocol_param) : '') + '
+      //     }
+      //   } else {
+      //     let index = method.indexOf(server.method);
+      //     if (index != -1) {
+      //       return "";
+      //     }
+      //     str = 'ssr://' + urlsafeBase64(server.host + ':' + account.port + ':origin:' + server.method + ':plain:' + urlsafeBase64(account.password) + '/?obfsparam=&remarks=' + urlsafeBase64(server.comment));
+      //   }
+      //   return str;
+      // };
+      const rss = config.rss || `${config.site}/api/user/account/subscribe`;
+      $scope.shadowrocket = account => {
+        if (!config.os || !config.os.iOS) return '';
+
+      }
+      $scope.urlScheme = account => {
         let str = '';
-        if (account.connType == "SSR") {
-          str = 'ssr://' + urlsafeBase64(server.host + ':' + (account.port + server.shift) + ':' + account.protocol + ':' + account.method + ':' + account.obfs + ':' + urlsafeBase64(account.password) + '/?obfsparam=' + (account.obfs_param ? urlsafeBase64(account.obfs_param) : '') + '&protoparam=' + (account.protocol_param ? urlsafeBase64(account.protocol_param) : '') + '&remarks=' + urlsafeBase64(server.comment || '这里显示备注'));
-        } else {
-          let index = method.indexOf(server.method);
-          if (index != -1) {
-            return "";
-          }
-          str = 'ssr://' + urlsafeBase64(server.host + ':' + account.port + ':origin:' + server.method + ':plain:' + urlsafeBase64(account.password) + '/?obfsparam=&remarks=' + urlsafeBase64(server.comment));
+        if (config.os.iOS) {
+          let base64 = urlsafeBase64(`${rss}/${account.subscribe}?type=v2ray&app=shadowrocket&ip=0&flow=1`);
+          str = `shadowrocket://add/sub://${base64}`;
         }
-        return str;
-      };
-      const config = configManager.getConfig();
-      $scope.shadowrocket = subscribe => {
-        let rss = config.rss || `${config.site}/api/user/account/subscribe`;
-        let base64 = urlsafeBase64(`${rss}/${subscribe}?type=shadowrocket&ip=0${config.hideFlow ? '' : '&flow=1'}`);
-        let remarks = base64Encode(config.site.split('//')[1] || config.site);//config.title
-        let str = `shadowrocket://add/sub://${base64}?remarks=${remarks}`;
+        if (config.os.Windows) {
+          let url = encodeURIComponent(`${rss}/${account.subscribe}?type=v2ray&app=clash&ip=0&flow=1`);
+          str = `clash://install-config?url=${url}`;
+        }
         return str;
       }
       $scope.getServerPortData = (account, serverId) => {
@@ -432,6 +523,60 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
         }
         return 180;
       };
+      //检查是否过期
+      const isExpire = (account) => {
+        if (account.type >= 2 && account.type <= 5) {
+          return Date.now() >= account.data.expire;
+        } else {
+          return false;
+        }
+      }
+      //节点详情
+      $scope.serverDetail = (account, serverId) => {
+        if (!account.isFlowOutOfLimit) { account.isFlowOutOfLimit = {}; }
+        account.expire = isExpire(account);
+        let servers = $scope.servers.filter(f => {
+          return f.id === serverId;
+        });
+        account.serverInfo = servers ? servers[0] : null;
+        if (account.serverInfo && (account.server || account.server.indexOf(account.serverInfo.id) > -1)) {
+          userApi.getServerPortData(account, serverId).then(success => {
+            account.lastConnect = success.lastConnect;
+            account.serverPortFlow = success.flow;
+            if (account.data) {
+              account.isFlowOutOfLimit[serverId] = ((account.data.flow + account.data.flowPack) <= account.serverPortFlow);
+            }
+          });
+          account.exist = true;
+        } else {
+          account.exist = false;
+        }
+        accountServerDialog.show(account, $scope.singleAccounts);
+      };
+
+      //提示信息
+      $scope.serverTip = (ev, aid, server) => {
+        $mdDialog.show({
+          contentElement: `#tip${aid}${server.id}`,
+          parent: angular.element(document.body),
+          targetEvent: ev,
+          openFrom: `#open_tip${aid}${server.id}`,
+          closeTo: angular.element(document.querySelector('#open_tip' + server.id)),
+          clickOutsideToClose: true
+        });
+      };
+
+      //显示所有节点
+      $scope.showAll = (account) => {
+        account.show_all = !account.show_all;
+      };
+
+      //账号信息
+      $scope.accountInfo = (account) => {
+        account.expire = isExpire(account);
+        accountInfoDialog.show(account);
+      };
+
       $scope.showChangePasswordDialog = (accountId, password) => {
         changePasswordDialog.show(accountId, password).then(() => {
           getUserAccountInfo();
@@ -459,12 +604,12 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           color: '#a33',
         };
       };
-      $scope.isAccountOutOfDate = account => {
-        if (account.type >= 2 && account.type <= 5) {
-          return Date.now() >= account.data.expire;
-        } else {
-          return false;
-        }
+      //检查是否过期
+      $scope.isAccountOutOfDate = isExpire;
+      //检查流量是否超出
+      $scope.isOverFlow = account => {
+        if (!account.data) return false;
+        return account.serverPortFlow > (account.data.flow + account.data.flowPack);
       };
       $scope.showQrcodeDialog = (server, account) => {
         let ssAddress = $scope.createQrCode(server, account);
@@ -617,7 +762,26 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           }
         });
       };
+      $scope.addMacAccount = () => {
+        addMacAccountDialog.show().then(() => {
+          getMacAccount();
+        }).catch(err => {
+          getMacAccount();
+        });
+      };
       getMacAccount();
+    }
+  ])
+  .controller('UserNoticeController', ['$scope', 'userApi', 'markdownDialog',
+    ($scope, userApi, markdownDialog) => {
+      $scope.setTitle('公告');
+      $scope.setMenuButton('arrow_back', 'user.index');
+      userApi.getNotice().then(success => {
+        $scope.notices = success;
+      });
+      $scope.showNotice = notice => {
+        markdownDialog.show(notice.title, notice.content);
+      };
     }
   ])
   .controller('ConnTypeController', ['$scope', '$state', 'userApi', 'alertDialog', '$http', '$localStorage',
@@ -625,7 +789,7 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       $scope.setTitle('连接方式');
       $scope.initloading = true;
       $scope.setMenuButton('arrow_back', 'user.settings');
-      $scope.typeList = ['SS', 'SSR'];
+      $scope.typeList = [{ code: 'SS', name: "SS" }, { code: 'SSR', name: "SSR和V2Ray" }];
       $scope.protocolList = ['auth_chain_a', 'auth_aes128_md5', 'auth_aes128_sha1'];
       $scope.obfsList = ['http_simple', 'http_post', 'tls1.2_ticket_auth'];
       $scope.methods = [
@@ -650,15 +814,31 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
           init(item);
         }
       });
+      $scope.$watch('data.connType', () => {
+        if ($scope.data.connType === 'SS') {
+          $scope.data.method = 'xchacha20-ietf-poly1305';
+          $scope.data.protocol = 'origin'
+          $scope.data.protocol_param = ''
+          $scope.data.obfs = 'plain'
+          $scope.data.obfs_param = ''
+        }
+        if ($scope.data.connType === 'SSR') {
+          $scope.data.method = 'chacha20-ietf';
+          $scope.data.protocol = 'auth_aes128_md5'
+          $scope.data.protocol_param = ''
+          $scope.data.obfs = 'http_simple'
+          $scope.data.obfs_param = 'download.windowsupdate.com'
+        }
+      });
       const init = (item) => {
         $scope.data = {
           account: item.id,
           connType: item.connType || "SS",
-          method: item.method || 'chacha20-ietf',
-          protocol: item.protocol || 'auth_aes128_md5',
+          method: item.method || 'xchacha20-ietf-poly1305',
+          protocol: item.protocol || 'origin',
           protocol_param: item.protocol_param,
-          obfs: item.obfs || 'http_simple',
-          obfs_param: item.obfs_param || 'download.windowsupdate.com'
+          obfs: item.obfs || 'plain',
+          obfs_param: item.obfs_param
         };
       }
       userApi.getUserAccount().then(success => {
@@ -672,6 +852,23 @@ app.controller('UserController', ['$scope', '$mdMedia', '$mdSidenav', '$state', 
       });
       $scope.confirm = () => {
         alertDialog.loading();
+        //不允许修改
+        if ($scope.data.connType === 'SS') {
+          $scope.data.method = 'xchacha20-ietf-poly1305';
+          $scope.data.protocol = 'origin'
+          $scope.data.protocol_param = ''
+          $scope.data.obfs = 'plain'
+          $scope.data.obfs_param = ''
+        }
+        if ($scope.data.connType === 'SSR') {
+          $scope.data.method = 'chacha20-ietf';
+          $scope.data.protocol = 'auth_aes128_md5'
+          $scope.data.protocol_param = ''
+          $scope.data.obfs = 'http_simple'
+          $scope.data.obfs_param = 'download.windowsupdate.com'
+        }
+
+
         $http.put('/api/user/setConnType/' + $scope.data.account, $scope.data).then(success => {
           alertDialog.show(`设置成功，请重新添加订阅后等待两分钟，再使用${$scope.data.connType}客户端连接`, '确定')
             .then(() => {

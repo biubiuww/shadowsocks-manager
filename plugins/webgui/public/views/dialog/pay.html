@@ -11,7 +11,8 @@
                     <md-radio-button ng-repeat="pt in publicInfo.payType" value="{{pt.type}}">
                         {{ pt.name }}
                     </md-radio-button>
-                </md-radio-group>
+                </md-radio-group>                
+                <div style="font-size:12px;margin: 20px 0 0 0;">如果没有出现支付方式，请刷新页面</div>
             </div>
             <div layout="column" layout-align="center center" ng-show="publicInfo.status === 'pay'">
                 <div ng-if="publicInfo.config.alipay && publicInfo.myPayType === 'alipay'" layout="column" layout-align="center center">
@@ -24,6 +25,7 @@
                     <div translate>请点击下面按钮完成PayPal支付</div>
                     <div style="margin-top: 5px;" id="paypal-button-container"></div>
                 </div>
+                <div style="font-size:12px;margin: 20px 0 0 0;">支付后，<span style='color: red;'>{{publicInfo.accountId?'请更新订阅':'删除订阅，重新添加'}}</span>，方可使用！</div>
             </div>
             <div layout="column" layout-align="center center" ng-if="publicInfo.status === 'choose'">
                 <div style="margin-bottom: 20px;" translate>请选择续费周期：</div>
@@ -32,10 +34,9 @@
                         layout-align="center center" ng-repeat-start="order in publicInfo.orders" value="{{order.id}}"
                         ng-hide="order[publicInfo.myPayType] === 0">
                         <div layout="row" layout-align="space-between center" style="min-width: 190px; max-width: 390px;">
-                            <span flex="65" translate>{{ order.name + (publicInfo.orderId==order.id?'[在用]':'')}}</span>
+                            <span flex="65" translate>{{ order.name }}</span>
                             <span flex="30" style="text-align:right; color: #888">
-                                <span>{{ publicInfo.myPayType === 'alipay' ? '￥' : '$' }}</span><span>{{order[publicInfo.myPayType]
-                                    }}</span>
+                                <span>{{ publicInfo.myPayType === 'alipay' ? '￥' : '$' }}</span><span>{{order[publicInfo.myPayType] }}</span>
                             </span>
                         </div>
                     </md-radio-button>
@@ -45,12 +46,12 @@
                         ng-show="+publicInfo.orderId === +order.id" ng-repeat-end>有效期：{{ publicInfo.account.data.to |
                         date : 'yyyy-MM-dd HH:mm' }}</div>
                 </md-radio-group>
-                <div style="font-size:12px;margin: 20px 0 0 0;">注意：套餐过期时间小于5天才可以更换套餐。</div>
+                <div style="font-size:12px;margin: 20px 0 0 0;color: red;">注意：套餐过期时间小于10天才可以更换套餐。</div>
             </div>
             <div layout="column" layout-align="center center" ng-show="publicInfo.status === 'giftcard'">
                 <form>
                     <md-input-container class="md-block" flex-gt-sm>
-                        <label>充值码</label>
+                        <label translate>充值码</label>
                         <input ng-model="publicInfo.giftCardPassword">
                     </md-input-container>
                 </form>
@@ -88,7 +89,7 @@
         </md-button>
         <md-button class="md-primary" ng-show="publicInfo.status === 'choose'" ng-click="publicInfo.showComment()"
             ng-disabled="!publicInfo.orderId">
-            {{ publicInfo.selectedOrder.comment ? '详情' : '支付' | translate }}
+            {{ publicInfo.selectedOrder.comment ? '下一步' : '支付' | translate }}
         </md-button>
         <md-button class="md-primary" ng-show="publicInfo.status === 'pay' || publicInfo.status === 'success' || publicInfo.status === 'error'"
             ng-click="publicInfo.close()">

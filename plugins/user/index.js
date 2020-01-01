@@ -1,7 +1,7 @@
 const knex = appRequire('init/knex').knex;
 const redis = appRequire('init/redis').redis;
 const crypto = require('crypto');
-const macAccount = appRequire('plugins/macAccount/index');
+// const macAccount = appRequire('plugins/macAccount/index');
 
 const checkPasswordLimit = {
   number: 5,
@@ -56,6 +56,7 @@ const addUser = async (options) => {
     if (options.telegramId) {
       Object.assign(insert, { telegram: options.telegramId });
     }
+    insert.regIp = options.ip || '';
     const user = await knex('user').insert(insert);
     return user;
   } catch (err) {
@@ -185,22 +186,23 @@ const getUserAndPaging = async (opt = {}) => {
     .where('id', '>', 1)
     .whereIn('type', type);
 
-  let users = knex('user').select([
-    'user.id as id',
-    'user.username as username',
-    'user.email as email',
-    'user.telegram as telegram',
-    'user.password as password',
-    'user.type as type',
-    'user.createTime as createTime',
-    'user.lastLogin as lastLogin',
-    'user.resetPasswordId as resetPasswordId',
-    'user.resetPasswordTime as resetPasswordTime',
-    'account_plugin.port as port',
-    'user.comment as comment'
-  ]).leftJoin('account_plugin', 'user.id', 'account_plugin.userId')
+  let users = knex('user')
+    .select([
+      'user.id as id',
+      'user.username as username',
+      'user.email as email',
+      'user.telegram as telegram',
+      'user.password as password',
+      'user.type as type',
+      'user.createTime as createTime',
+      'user.lastLogin as lastLogin',
+      'user.resetPasswordId as resetPasswordId',
+      'user.resetPasswordTime as resetPasswordTime',
+      'user.comment as comment'
+    ])
+    .select(knex.raw('(select count(1) from account_plugin where account_plugin.userId=user.id) as port'))
     .where('user.id', '>', 1)
-    .whereIn('user.type', type).groupBy('user.id');
+    .whereIn('user.type', type);
 
   if (group >= 0) {
     count = count.where({ 'user.group': group });
@@ -237,6 +239,7 @@ const deleteUser = async userId => {
   if (existAccount.length) {
     return Promise.reject('delete user fail');
   }
+  const macAccount = appRequire('plugins/macAccount/index');
   const macAccounts = await macAccount.getAccountByUserId(userId);
   if (macAccounts.length) {
     macAccounts.forEach(f => {
@@ -264,8 +267,8 @@ const changePassword = async (userId, oldPassword, newPassword) => {
   await editUser({
     id: userId,
   }, {
-      password: newPassword,
-    });
+    password: newPassword,
+  });
 };
 
 exports.add = addUser;

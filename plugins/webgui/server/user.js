@@ -2,6 +2,7 @@ const user = appRequire('plugins/user/index');
 const account = appRequire('plugins/account/index');
 const accountFlow = appRequire('plugins/account/accountFlow');
 const flow = appRequire('plugins/flowSaver/flow');
+const moment = require('moment');
 const knex = appRequire('init/knex').knex;
 const emailPlugin = appRequire('plugins/email/index');
 const orderPlugin = appRequire('plugins/webgui_order');
@@ -17,6 +18,7 @@ const crypto = require('crypto');
 const flowPack = appRequire('plugins/webgui_order/flowPack');
 const alipayPlugin = appRequire('plugins/alipay/index');
 const macAccountPlugin = appRequire('plugins/macAccount/index');
+const moreType = appRequire('plugins/moreType/index');
 
 const alipay = appRequire('plugins/alipay/index');
 
@@ -55,10 +57,52 @@ exports.getAccount = async (req, res) => {
       }
       //账号太多不修改
       if (accounts.length < 10) {
-        await accountFlow.edit(account.id);
+        //await accountFlow.edit(account.id);
+        await accountFlow.editForLogin(account.id);
       }
     }
     res.send(accounts);
+  } catch (err) {
+    console.log(err);
+    res.status(403).end();
+  }
+};
+exports.getSingleAccount = async (req, res) => {
+  try {
+    let accounts = await account.getSingleAccount();
+    res.send(accounts);
+  } catch (error) {
+    console.log(err);
+    res.status(403).end();
+  }
+}
+exports.getAccountUsage = async (req, res) => {
+  try {
+    const userId = req.session.user;
+    const accounts = await account.getAccount({ userId });
+    const servers = await knex('server').where({}).then(s => s.map(m => m.id));
+    const day = [
+      moment().hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+      moment().hour(24).minute(0).second(0).millisecond(0).toDate().valueOf(),
+    ];
+    const week = [
+      moment().day(0).hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+      moment().day(7).hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+    ];
+    const month = [
+      moment().date(0).hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+      moment().date(31).hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+    ];
+    const dayFlow = await Promise.all(accounts.map(m => {
+      return flow.getServerPortFlowWithScale(null, m.id, day, true).then(s => s[0]);
+    })).then(s => s.reduce((a, b) => a + b, 0));
+    const weekFlow = await Promise.all(accounts.map(m => {
+      return flow.getServerPortFlowWithScale(null, m.id, week, true).then(s => s[0]);
+    })).then(s => s.reduce((a, b) => a + b, 0));
+    const monthFlow = await Promise.all(accounts.map(m => {
+      return flow.getServerPortFlowWithScale(null, m.id, month, true).then(s => s[0]);
+    })).then(s => s.reduce((a, b) => a + b, 0));
+    res.send([dayFlow, weekFlow, monthFlow]);
   } catch (err) {
     console.log(err);
     res.status(403).end();
@@ -109,7 +153,7 @@ exports.getServers = (req, res) => {
     });
   };
   let servers;
-  knex('server').select(['id', 'type', 'host', 'name', 'method', 'scale', 'comment', 'shift', 'key', 'net', 'wgPort']).orderBy('name')
+  knex('server').select(['id', 'type', 'host', 'name', 'method', 'scale', 'comment', 'shift', 'key', 'net', 'wgPort', 'singleMode', 'area', 'status','v2ray', 'v2rayMethod', 'v2rayPort', 'v2rayAID', 'v2rayTLS', 'v2rayNet', 'v2rayPath', 'v2rayHost']).orderByRaw('sort,name')
     .then(success => {
       servers = serverAliasFilter(success);
       return account.getAccount({
@@ -128,21 +172,24 @@ exports.getServers = (req, res) => {
       const isAll = success.some(account => {
         if (!account.server) { return true; }
       });
-      if (isAll) {
-        return res.send(servers);
-      } else {
-        let accountArray = [];
-        success.forEach(account => {
-          account.server.forEach(s => {
-            if (accountArray.indexOf(s) < 0) {
-              accountArray.push(s);
-            }
-          });
-        });
-        return res.send(servers.filter(f => {
-          return accountArray.indexOf(f.id) >= 0;
-        }));
-      }
+
+      //return res.send(new Buffer(JSON.stringify(servers)).toString('base64'));
+      return res.send(servers);
+      // if (isAll) {
+      //   return res.send(servers);
+      // } else {
+      //   let accountArray = [];
+      //   success.forEach(account => {
+      //     account.server.forEach(s => {
+      //       if (accountArray.indexOf(s) < 0) {
+      //         accountArray.push(s);
+      //       }
+      //     });
+      //   });
+      //   return res.send(servers.filter(f => {
+      //     return accountArray.indexOf(f.id) >= 0;
+      //   }));
+      // }
     }).catch(err => {
       console.log(err);
       res.status(500).end();
@@ -271,8 +318,8 @@ exports.getPrice = async (req, res) => {
         '5': 3600000,
       };
       const expire = accountData.create + time[account.type] * accountData.limit;
-      //5天内到期才能更换套餐
-      return expire <= Date.now() + 5 * 24 * 60 * 60 * 1000;
+      //10天内到期才能更换套餐
+      return expire <= Date.now() + 10 * 24 * 60 * 60 * 1000;
     };
     if (accountId) {
       orderInfo = await orderPlugin.getOneOrderByAccountId(accountId);
@@ -314,15 +361,21 @@ exports.getPrice = async (req, res) => {
 exports.getNotice = async (req, res) => {
   try {
     const userId = req.session.user;
-    const groupInfo = await knex('user').select([
-      'group.id as id',
-      'group.showNotice as showNotice',
-    ]).innerJoin('group', 'user.group', 'group.id').where({
-      'user.id': userId,
-    }).then(s => s[0]);
-    const group = [groupInfo.id];
-    if (groupInfo.showNotice) { group.push(-1); }
-    const notices = await knex('notice').select().whereIn('group', group).orderBy('time', 'desc');
+    const noticesWithoutGroup = await knex('notice').where({ group: 0 });
+    const noticesWithGroup = await knex('notice').select([
+      'notice.id as id',
+      'notice.title as title',
+      'notice.content as content',
+      'notice.time as time',
+      'notice.group as group',
+      'notice.autopop as autopop',
+    ])
+      .innerJoin('notice_group', 'notice.id', 'notice_group.noticeId')
+      .innerJoin('user', 'user.group', 'notice_group.groupId')
+      .where('notice.group', '>', 0)
+      .where({ 'user.id': userId })
+      .groupBy('notice.id');
+    const notices = [...noticesWithoutGroup, ...noticesWithGroup].sort((a, b) => b.time - a.time);
     return res.send(notices);
   } catch (err) {
     console.log(err);
@@ -567,7 +620,7 @@ exports.getAccountSubscribe = async (req, res) => {
       userId
     }).then(s => s[0]);
     if (!account.subscribe) {
-      const subscribeToken = crypto.randomBytes(16).toString('hex');;
+      const subscribeToken = crypto.randomBytes(8).toString('hex');;
       await await knex('account_plugin').update({
         subscribe: subscribeToken
       }).where({
@@ -595,8 +648,8 @@ exports.updateAccountSubscribe = async (req, res) => {
       userId,
     }).then(s => s[0]);
     if (!account) { return Promise.reject('account not found'); }
-    const subscribeToken = crypto.randomBytes(16).toString('hex');;
-    await await knex('account_plugin').update({
+    const subscribeToken = crypto.randomBytes(8).toString('hex');
+    await knex('account_plugin').update({
       subscribe: subscribeToken
     }).where({
       id: accountId,
@@ -679,6 +732,7 @@ exports.addMacAccount = async (req, res) => {
     res.status(403).end();
   }
 };
+//设置连接方式
 exports.setConnType = async (req, res) => {
   const accountId = req.params.accountId;
   const connType = req.body.connType;
@@ -710,6 +764,17 @@ exports.setConnType = async (req, res) => {
   }).catch(err => {
     console.log(err);
     res.status(403).end();
-  });;
+  });
+};
+//获取在线及订阅Ip
+exports.getAliveIps = async (req, res) => {
+  try {
+    const accountId = req.params.accountId;
+    const result = await moreType.getAliveIP(accountId);
+    res.send(result);
+  } catch (err) {
+    console.log(err);
+    res.status(403).end();
+  }
 };
 

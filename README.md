@@ -6,6 +6,8 @@
 [download-url]: https://npmjs.org/package/shadowsocks-manager
 [license-image]: https://img.shields.io/npm/l/shadowsocks-manager.svg
 
+[安装方法](https://www.balala.ml/archives/20.html)
+
 # shadowsocks-manager
 
 A shadowsocks manager tool for multi user and traffic control.  
@@ -17,11 +19,11 @@ If you want to use the old version, please switch to [this branch](https://githu
 
 ## WebGUI Demo:
 
-[https://shadowghost.app](https://ssmgr.gyteng.com)
+[https://shadowghost.app](https://2young.2simple.dev)
 
 ## FreeAccount Demo:
 
-[https://free.gyteng.com](https://free1.gyteng.com)
+[https://free.gyteng.com](https://free2.gyteng.com)
 
 
 ## Dependencies

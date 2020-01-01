@@ -12,7 +12,9 @@ const groupPlugin = appRequire('plugins/group/index');
 const push = appRequire('plugins/webgui/server/push');
 const macAccount = appRequire('plugins/macAccount/index');
 const ref = appRequire('plugins/webgui_ref/index');
-const request = require('request-promise');
+const rp = require('request-promise');
+const TwitterLogin = appRequire('plugins/webgui/server/twitterLogin');
+const redis = appRequire('init/redis').redis;
 
 const isTelegram = config.plugins.webgui_telegram && config.plugins.webgui_telegram.use;
 let telegram;
@@ -24,6 +26,142 @@ const formatMacAddress = mac => {
   return mac.replace(/-/g, '').replace(/:/g, '').toLowerCase();
 };
 
+const getNewPort = async () => {
+  return knex('webguiSetting').select().where({
+    key: 'account',
+  }).then(success => {
+    if (!success.length) { return Promise.reject('settings not found'); }
+    success[0].value = JSON.parse(success[0].value);
+    return success[0].value.port;
+  }).then(port => {
+    if (port.random) {
+      const getRandomPort = () => Math.floor(Math.random() * (port.end - port.start + 1) + port.start);
+      let retry = 0;
+      let myPort = getRandomPort();
+      const checkIfPortExists = port => {
+        let myPort = port;
+        return knex('account_plugin').select()
+          .where({ port }).then(success => {
+            if (success.length && retry <= 30) {
+              retry++;
+              myPort = getRandomPort();
+              return checkIfPortExists(myPort);
+            } else if (success.length && retry > 30) {
+              return Promise.reject('Can not get a random port');
+            } else {
+              return myPort;
+            }
+          });
+      };
+      return checkIfPortExists(myPort);
+    } else {
+      return knex('account_plugin').select()
+        .whereBetween('port', [port.start, port.end])
+        .orderBy('port', 'ASC').then(success => {
+          const portArray = success.map(m => m.port);
+          let myPort;
+          for (let p = port.start; p <= port.end; p++) {
+            if (portArray.indexOf(p) < 0) {
+              myPort = p; break;
+            }
+          }
+          if (myPort) {
+            return myPort;
+          } else {
+            return Promise.reject('no port');
+          }
+        });
+    }
+  });
+};
+
+//获得反向代理的真实ip
+const getIp = (req) => {
+  const ips = req.headers['x-forwarded-for'];
+  let ip = '';
+  if (ips) {
+    ip = ips.split(',')[0];
+  } else {
+    ip = req.headers['x-real-ip'] || req.connection.remoteAddress;
+  }
+  return ip;
+}
+const createUser = async (email, password, ip = '', from = '') => {
+  let type = 'normal';
+  await knex('user').count('id AS count').then(success => {
+    if (!success[0].count) {
+      type = 'admin';
+    }
+  });
+  let group = 0;
+  const webguiSetting = await knex('webguiSetting').select().where({
+    key: 'account',
+  }).then(success => JSON.parse(success[0].value));
+  if (webguiSetting.defaultGroup) {
+    try {
+      await groupPlugin.getOneGroup(webguiSetting.defaultGroup);
+      group = webguiSetting.defaultGroup;
+    } catch (err) { }
+  }
+  const [userId] = await user.add({
+    username: email,
+    email,
+    ip,
+    password,
+    type,
+    group,
+  });
+  if (userId === 1) {
+    return {
+      id: userId,
+      type: 'admin',
+    };
+  }
+  const newUserAccount = webguiSetting.accountForNewUser;
+  if (newUserAccount.isEnable) {
+    const port = await getNewPort();
+    if (newUserAccount.fromOrder) {
+      const orderInfo = await knex('webgui_order').where({ id: newUserAccount.type }).then(s => s[0]);
+      if (orderInfo) {
+        await account.addAccount(orderInfo.type || 5, {
+          user: userId,
+          orderId: orderInfo.id,
+          port,
+          password: Math.random().toString().substr(2, 10),
+          time: Date.now(),
+          limit: orderInfo.cycle,
+          flow: orderInfo.flow,
+          server: orderInfo.server,
+          autoRemove: orderInfo.autoRemove ? 1 : 0,
+          multiServerFlow: orderInfo.multiServerFlow ? 1 : 0,
+        });
+      }
+    } else {
+      await account.addAccount(newUserAccount.type || 5, {
+        user: userId,
+        orderId: 0,
+        port,
+        password: Math.random().toString().substr(2, 10),
+        time: Date.now(),
+        limit: newUserAccount.limit || 8,
+        flow: (newUserAccount.flow ? newUserAccount.flow : 350) * 1000000,
+        server: newUserAccount.server ? JSON.stringify(newUserAccount.server) : null,
+        autoRemove: newUserAccount.autoRemove ? 1 : 0,
+        multiServerFlow: newUserAccount.multiServerFlow ? 1 : 0,
+      });
+    }
+  }
+  logger.info(`[${email}] signup success`);
+  push.pushMessage('注册', {
+    body: `${from}用户[ ${email.toString().toLowerCase()} ]注册成功`,
+  });
+  isTelegram && telegram.push(`${from}用户[ ${email.toString().toLowerCase()} ]注册成功`);
+  return {
+    id: userId,
+    type: 'normal',
+  };
+};
+
 exports.signup = async (req, res) => {
   try {
     req.checkBody('email', 'Invalid email').isEmail();
@@ -31,9 +169,7 @@ exports.signup = async (req, res) => {
     req.checkBody('password', 'Invalid password').notEmpty();
     let type = 'normal';
     const validation = await req.getValidationResult();
-    if (!validation.isEmpty()) {
-      return Promise.reject('invalid body');
-    }
+    if (!validation.isEmpty()) { throw (validation.array()); }
     const email = req.body.email.toString().toLowerCase();
     const code = req.body.code;
     await emailPlugin.checkCode(email, code);
@@ -53,67 +189,24 @@ exports.signup = async (req, res) => {
         group = webguiSetting.defaultGroup;
       } catch (err) { }
     }
+    const ip = getIp(req);
     const [userId] = await user.add({
       username: email,
       email,
       password,
       type,
       group,
+      ip
     });
     req.session.user = userId;
     req.session.type = type;
     if (req.body.ref) { ref.addRefUser(req.body.ref, req.session.user); }
-    if (userId === 1) { return; }
+    if (userId === 1) {
+      res.send(type);
+      return;
+    }
     const newUserAccount = webguiSetting.accountForNewUser;
     if (newUserAccount.isEnable) {
-      const getNewPort = async () => {
-        return knex('webguiSetting').select().where({
-          key: 'account',
-        }).then(success => {
-          if (!success.length) { return Promise.reject('settings not found'); }
-          success[0].value = JSON.parse(success[0].value);
-          return success[0].value.port;
-        }).then(port => {
-          if (port.random) {
-            const getRandomPort = () => Math.floor(Math.random() * (port.end - port.start + 1) + port.start);
-            let retry = 0;
-            let myPort = getRandomPort();
-            const checkIfPortExists = port => {
-              let myPort = port;
-              return knex('account_plugin').select()
-                .where({ port }).then(success => {
-                  if (success.length && retry <= 30) {
-                    retry++;
-                    myPort = getRandomPort();
-                    return checkIfPortExists(myPort);
-                  } else if (success.length && retry > 30) {
-                    return Promise.reject('Can not get a random port');
-                  } else {
-                    return myPort;
-                  }
-                });
-            };
-            return checkIfPortExists(myPort);
-          } else {
-            return knex('account_plugin').select()
-              .whereBetween('port', [port.start, port.end])
-              .orderBy('port', 'ASC').then(success => {
-                const portArray = success.map(m => m.port);
-                let myPort;
-                for (let p = port.start; p <= port.end; p++) {
-                  if (portArray.indexOf(p) < 0) {
-                    myPort = p; break;
-                  }
-                }
-                if (myPort) {
-                  return myPort;
-                } else {
-                  return Promise.reject('no port');
-                }
-              });
-          }
-        });
-      };
       const port = await getNewPort();
       if (newUserAccount.fromOrder) {
         const orderInfo = await knex('webgui_order').where({ id: newUserAccount.type }).then(s => s[0]);
@@ -122,7 +215,7 @@ exports.signup = async (req, res) => {
             user: userId,
             orderId: orderInfo.id,
             port,
-            password: Math.random().toString().substr(2, 10),
+            password: Math.random().toString().substr(2, 4),
             time: Date.now(),
             limit: orderInfo.cycle,
             flow: orderInfo.flow,
@@ -171,7 +264,7 @@ exports.login = async (req, res) => {
     req.checkBody('password', 'Invalid password').notEmpty();
     const validation = await req.getValidationResult();
     if (!validation.isEmpty()) {
-      return Promise.reject('invalid body');
+      throw ('invalid body');
     }
     const email = req.body.email.toString().toLowerCase();
     const password = req.body.password;
@@ -199,11 +292,292 @@ exports.login = async (req, res) => {
   }
 };
 
+exports.googleLogin = async (req, res) => {
+  try {
+    const ip = getIp(req);
+    const { code, redirect_uri } = req.body;
+    const {
+      google_login_client_id: client_id,
+      google_login_client_secret: client_secret
+    } = config.plugins.webgui;
+    if (!code || !client_id) {
+      return await Promise.reject();
+    }
+    const result = await rp({
+      uri: 'https://www.googleapis.com/oauth2/v4/token',
+      method: 'POST',
+      body: {
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+        grant_type: 'authorization_code',
+      },
+      json: true,
+    });
+    if (!result.access_token) { return await Promise.reject(); }
+    const userInfo = await rp({
+      uri: 'https://www.googleapis.com/oauth2/v1/userinfo',
+      method: 'GET',
+      qs: {
+        alt: 'json',
+      },
+      headers: {
+        Authorization: `Bearer ${result.access_token}`,
+      },
+      json: true,
+    });
+    if (userInfo.verified_email && userInfo.email) {
+      const email = userInfo.email;
+      const user = await knex('user').where({ username: email }).then(s => s[0]);
+      if (user) {
+        req.session.user = user.id;
+        req.session.type = user.type;
+        logger.info(`Google用户[${email}]登录`);
+        return res.send({ id: user.id, type: user.type });
+      } else {
+        const password = Math.random().toString();
+        const user = await createUser(email, password, ip, 'Google');
+        req.session.user = user.id;
+        req.session.type = user.type;
+        return res.send({ id: user.id, type: user.type });
+      }
+    }
+    return await Promise.reject();
+  } catch (err) {
+    logger.error(err);
+    return res.status(403).end();
+  }
+};
+
+let facebookAppToken = '';
+const getFacebookAppToken = async () => {
+  if (facebookAppToken) { return facebookAppToken; }
+  const {
+    facebook_login_client_id: client_id,
+    facebook_login_client_secret: client_secret,
+  } = config.plugins.webgui;
+  const result = await rp({
+    uri: 'https://graph.facebook.com/oauth/access_token',
+    qs: {
+      client_id,
+      client_secret,
+      grant_type: 'client_credentials',
+    },
+    json: true,
+  });
+  if (!result.access_token) { return Promise.reject(); }
+  facebookAppToken = result.access_token;
+  return result.access_token;
+};
+
+exports.facebookLogin = async (req, res) => {
+  try {
+    const ip = getIp(req);
+    const { code, redirect_uri } = req.body;
+    const {
+      facebook_login_client_id: client_id,
+      facebook_login_client_secret: client_secret,
+    } = config.plugins.webgui;
+    if (!code || !client_id) {
+      return Promise.reject();
+    }
+    const result = await rp({
+      uri: 'https://graph.facebook.com/v3.3/oauth/access_token',
+      method: 'GET',
+      qs: {
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+      },
+      json: true,
+    });
+    if (!result.access_token) { return Promise.reject(); }
+    const checkToken = await rp({
+      uri: 'https://graph.facebook.com/debug_token',
+      method: 'GET',
+      qs: {
+        input_token: result.access_token,
+        access_token: await getFacebookAppToken(),
+      },
+      json: true,
+    });
+    if (!checkToken.data || checkToken.data.app_id !== client_id || !checkToken.data.is_valid) {
+      return Promise.reject();
+    }
+    const userInfo = await rp({
+      uri: 'https://graph.facebook.com/me',
+      method: 'POST',
+      qs: {
+        fields: 'email',
+        access_token: result.access_token,
+      },
+      json: true,
+    });
+    if (userInfo.email) {
+      const email = userInfo.email;
+      const user = await knex('user').where({ username: email }).then(s => s[0]);
+      if (user) {
+        req.session.user = user.id;
+        req.session.type = user.type;
+        logger.info(`Facebook用户[${email}]登录`);
+        return res.send({ id: user.id, type: user.type });
+      } else {
+        const password = Math.random().toString();
+        const user = await createUser(email, password, ip, 'Facebook');
+        req.session.user = user.id;
+        req.session.type = user.type;
+        return res.send({ id: user.id, type: user.type });
+      }
+    }
+    return Promise.reject();
+  } catch (err) {
+    logger.error(err);
+    return res.status(403).end();
+  }
+};
+
+exports.githubLogin = async (req, res) => {
+  try {
+    const ip = getIp(req);
+    const { code, redirect_uri, state } = req.body;
+    const {
+      github_login_client_id: client_id,
+      github_login_client_secret: client_secret,
+    } = config.plugins.webgui;
+    if (!code || !client_id) {
+      return await Promise.reject();
+    }
+    const result = await rp({
+      uri: 'https://github.com/login/oauth/access_token',
+      method: 'POST',
+      body: {
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+        state,
+      },
+      json: true,
+    });
+    if (!result.access_token) { return await Promise.reject(); }
+    const userInfo = await rp({
+      uri: 'https://api.github.com/user',
+      method: 'GET',
+      headers: {
+        'User-Agent': 'ssmgr',
+        Authorization: `token ${result.access_token}`,
+      },
+      json: true,
+    });
+    const emails = await rp({
+      uri: 'https://api.github.com/user/emails',
+      method: 'GET',
+      headers: {
+        'User-Agent': 'ssmgr',
+        Authorization: `token ${result.access_token}`,
+      },
+      json: true,
+    });
+    const emailInfo = emails.filter(f => f.primary === true)[0];
+    if (emailInfo.email && emailInfo.verified) {
+      const email = emailInfo.email;
+      const user = await knex('user').where({ username: email }).then(s => s[0]);
+      if (user) {
+        req.session.user = user.id;
+        req.session.type = user.type;
+        logger.info(`Github用户[${email}]登录`);
+        return res.send({ id: user.id, type: user.type });
+      } else {
+        const password = Math.random().toString();
+        const user = await createUser(email, password, ip, 'Github');
+        req.session.user = user.id;
+        req.session.type = user.type;
+        return res.send({ id: user.id, type: user.type });
+      }
+    }
+    return await Promise.reject();
+  } catch (err) {
+    logger.error(err);
+    return res.status(403).end();
+  }
+};
+
+exports.getTwitterLoginUrl = async (req, res) => {
+  try {
+    const { callbackUrl } = req.query;
+    const time = callbackUrl.split('?time=')[1];
+    const {
+      twitter_login_consumer_key: consumerKey,
+      twitter_login_consumer_secret: consumerSecret
+    } = config.plugins.webgui;
+    if (!callbackUrl || !time || !consumerKey || !consumerSecret) {
+      throw ('invalid params');
+    }
+    if (Math.abs(Date.now() - (+time)) >= 10 * 60 * 1000) {
+      throw ('invalid time');
+    }
+    const tl = new TwitterLogin({
+      consumerKey,
+      consumerSecret,
+      callbackUrl,
+    });
+    const { tokenSecret, url } = await tl.login();
+    await redis.set(`TwitterLogin:${time}`, tokenSecret, 'EX', 120);
+    res.send(url);
+  } catch (err) {
+    logger.error(err);
+    return res.status(403).end();
+  }
+};
+
+exports.twitterLogin = async (req, res) => {
+  try {
+    const ip = getIp(req);
+    const { oauth_token, oauth_verifier, callbackUrl } = req.body;
+    const time = callbackUrl.split('?time=')[1];
+    if (Math.abs(Date.now() - (+time)) >= 10 * 60 * 1000) {
+      throw ('invalid time');
+    }
+    const {
+      twitter_login_consumer_key: consumerKey,
+      twitter_login_consumer_secret: consumerSecret
+    } = config.plugins.webgui;
+    const tl = new TwitterLogin({
+      consumerKey,
+      consumerSecret,
+      callbackUrl,
+    });
+    const tokenSecret = await redis.get(`TwitterLogin:${time}`);
+    const { userToken, userTokenSecret } = await tl.callback({ oauth_token, oauth_verifier }, tokenSecret);
+    const userInfo = await tl.userInfo({ userToken, userTokenSecret });
+
+    const email = userInfo.email;
+    const user = await knex('user').where({ username: email }).then(s => s[0]);
+    if (user) {
+      req.session.user = user.id;
+      req.session.type = user.type;
+      logger.info(`Twitter用户[${email}]登录`);
+      return res.send({ id: user.id, type: user.type });
+    } else {
+      const password = Math.random().toString();
+      const user = await createUser(email, password, ip, 'Twitter');
+      req.session.user = user.id;
+      req.session.type = user.type;
+      return res.send({ id: user.id, type: user.type });
+    }
+  } catch (err) {
+    logger.error(err);
+    return res.status(403).end();
+  }
+};
+
 exports.macLogin = (req, res) => {
   delete req.session.user;
   delete req.session.type;
   const mac = formatMacAddress(req.body.mac);
-  const ip = req.headers['x-real-ip'] || req.connection.remoteAddress;
+  const ip = getIp(req);
   macAccount.login(mac, ip)
     .then(success => {
       req.session.user = success.userId;
@@ -249,6 +623,10 @@ exports.status = async (req, res) => {
       success[0].value = JSON.parse(success[0].value);
       return success[0].value;
     }));
+    const accountSetting = await knex('webguiSetting').where({
+      key: 'account'
+    }).then(s => s[0]).then(s => JSON.parse(s.value));
+
     const title = base.title;
     const themePrimary = base.themePrimary;
     const themeAccent = base.themeAccent;
@@ -260,7 +638,16 @@ exports.status = async (req, res) => {
     const version = appRequire('package').version;
     const site = config.plugins.webgui.site;
     const rss = config.plugins.webgui.rss;
+    const doc = config.plugins.webgui.doc;
     const skin = config.plugins.webgui.skin || 'default';
+    const language = config.plugins.webgui.language || '';
+    const google_login_client_id = config.plugins.webgui.google_login_client_id || '';
+    const facebook_login_client_id = config.plugins.webgui.facebook_login_client_id || '';
+    const github_login_client_id = config.plugins.webgui.github_login_client_id || '';
+    const crisp = (config.plugins.webgui_crisp && config.plugins.webgui_crisp.use) ? config.plugins.webgui_crisp.websiteId : '';
+    const singleMode = accountSetting.singleMode || 'off';
+    const ip = getIp(req);
+
     let alipay;
     let paypal;
     let paypalMode;
@@ -272,6 +659,7 @@ exports.status = async (req, res) => {
     let multiAccount;
     let simple;
     let hideFlow;
+    let moreType;
     if (status) {
       email = (await knex('user').select(['email']).where({ id }).then(s => s[0])).email;
       alipay = config.plugins.alipay && config.plugins.alipay.use;
@@ -280,32 +668,52 @@ exports.status = async (req, res) => {
       telegram = config.plugins.webgui_telegram && config.plugins.webgui_telegram.use;
       giftcard = config.plugins.giftcard && config.plugins.giftcard.use;
       hideFlow = config.plugins.webgui.hideFlow;
+      moreType = config.plugins.moreType;
       refCode = (await knex('webguiSetting').select().where({
         key: 'webgui_ref',
       }).then(success => {
         success[0].value = JSON.parse(success[0].value);
         return success[0].value;
       })).useRef;
-      subscribe = (await knex('webguiSetting').select().where({
-        key: 'account',
-      }).then(success => {
-        success[0].value = JSON.parse(success[0].value);
-        return success[0].value;
-      })).subscribe;
-      simple = (await knex('webguiSetting').select().where({
-        key: 'account',
-      }).then(success => {
-        success[0].value = JSON.parse(success[0].value);
-        return success[0].value;
-      })).simple;
+      subscribe = accountSetting.subscribe;
+      simple = accountSetting.simple;
     }
     if (status === 'normal') {
       knex('user').update({ lastLogin: Date.now() }).where({ id }).then();
       const groupId = (await knex('user').select(['group']).where({ id }).then(s => s[0])).group;
       multiAccount = (await knex('group').where({ id: groupId }).then(s => s[0])).multiAccount;
     }
+    //检查手机操作系统
+    const checkOS = () => {
+      var ua = req.headers['user-agent'],
+        $ = {};
+
+      if (/mobile/i.test(ua))
+        $.Mobile = true;
+
+      if (/like Mac OS X/.test(ua)) {
+        $.iOS = /CPU( iPhone)? OS ([0-9\._]+) like Mac OS X/.exec(ua)[2].replace(/_/g, '.');
+        $.iPhone = /iPhone/.test(ua);
+        $.iPad = /iPad/.test(ua);
+      }
+
+      if (/Android/.test(ua))
+        $.Android = /Android ([0-9\.]+)[\);]/.exec(ua)[1];
+
+      if (/webOS\//.test(ua))
+        $.webOS = /webOS\/([0-9\.]+)[\);]/.exec(ua)[1];
+
+      if (/(Intel|PPC) Mac OS X/.test(ua))
+        $.Mac = /(Intel|PPC) Mac OS X ?([0-9\._]*)[\)\;]/.exec(ua)[2].replace(/_/g, '.') || true;
+
+      if (/Windows NT/.test(ua))
+        $.Windows = /Windows NT ([0-9\._]+)[\);]/.exec(ua)[1];
+      return $;
+    }
+    let os = checkOS();
     res.send({
       status,
+      ip,
       id,
       email,
       version,
@@ -314,7 +722,9 @@ exports.status = async (req, res) => {
       browserColor,
       site,
       rss,
+      doc,
       skin,
+      language,
       alipay,
       paypal,
       paypalMode,
@@ -326,6 +736,13 @@ exports.status = async (req, res) => {
       title,
       hideFlow,
       simple,
+      google_login_client_id,
+      facebook_login_client_id,
+      github_login_client_id,
+      crisp,
+      moreType,
+      singleMode,
+      os
     });
   } catch (err) {
     logger.error(err);
@@ -342,19 +759,27 @@ exports.sendCode = (req, res) => {
     if (result.isEmpty) { return; }
     return Promise.reject('invalid email');
   }).then(() => {
-    return knex('webguiSetting').select().where({
-      key: 'account',
-    })
-      .then(success => JSON.parse(success[0].value))
+    return knex('webguiSetting').select().whereIn('key', ['webgui_ref', 'account'])
       .then(success => {
-        if (success.signUp.isEnable) { return; }
+        let data = {};
+        data[success[0].key] = JSON.parse(success[0].value);
+        data[success[1].key] = JSON.parse(success[1].value);
+        return data;
+      })
+      .then(success => {
+        if (success.account.signUp.isEnable) { return; }
         if (refCode) {
           return ref.checkRefCodeForSignup(refCode).then(success => {
             if (success) { return; }
             return Promise.reject('invalid ref code');
           });
         }
-        return Promise.reject('signup close');
+        isTelegram && telegram.push(`用户[ ${req.body.email.toString().toLowerCase()} ]注册失败，未开放注册`);
+        if (success.webgui_ref.useWhenSignupClose) {
+          return Promise.reject('signup ref');
+        } else {
+          return Promise.reject('signup close');
+        }
       });
   }).then(() => {
     return knex('webguiSetting').select().where({
@@ -368,7 +793,7 @@ exports.sendCode = (req, res) => {
     });
   }).then(success => {
     const email = req.body.email.toString().toLowerCase();
-    const ip = req.headers['x-real-ip'] || req.connection.remoteAddress;
+    const ip = getIp(req);
     const session = req.sessionID;
     return emailPlugin.sendCode(email, success.title || 'ss验证码', success.content || '欢迎新用户注册，\n您的验证码是：', {
       ip,
@@ -378,7 +803,7 @@ exports.sendCode = (req, res) => {
     res.send('success');
   }).catch(err => {
     logger.error(err);
-    const errorData = ['email in black list', 'send email out of limit', 'signup close', 'invalid ref code'];
+    const errorData = ['email in black list', 'send email out of limit', 'signup close', 'invalid ref code', 'signup ref'];
     if (errorData.indexOf(err) < 0) {
       return res.status(403).end();
     } else {
@@ -415,7 +840,7 @@ exports.sendResetPasswordEmail = (req, res) => {
       return Promise.reject('already send');
     }
     token = crypto.randomBytes(16).toString('hex');
-    const ip = req.headers['x-real-ip'] || req.connection.remoteAddress;
+    const ip = getIp(req);
     const session = req.sessionID;
     const address = config.plugins.webgui.site + '/home/password/reset/' + token;
     if (resetEmail.content.indexOf('${address}') >= 0) {
@@ -432,9 +857,9 @@ exports.sendResetPasswordEmail = (req, res) => {
     return user.edit({
       username: email,
     }, {
-        resetPasswordId: token,
-        resetPasswordTime: Date.now(),
-      });
+      resetPasswordId: token,
+      resetPasswordTime: Date.now(),
+    });
   }).then(success => {
     res.send('success');
   }).catch(err => {
@@ -478,10 +903,10 @@ exports.resetPassword = (req, res) => {
     return user.edit({
       resetPasswordId: token,
     }, {
-        password,
-        resetPasswordId: null,
-        resetPasswordTime: null,
-      });
+      password,
+      resetPasswordId: null,
+      resetPasswordTime: null,
+    });
   }).then(success => {
     res.send('success');
   }).catch(err => {
@@ -503,7 +928,7 @@ exports.visitRef = (req, res) => {
 exports.wallpaper = async (req, res) => {
   let rand = Math.floor(Math.random() * 10);
   let url = `http://cn.bing.com/HPImageArchive.aspx?format=js&idx=${rand}&n=1`
-  let imgurl = await request({ url, timeout: 10 * 1000 }).then(success => {
+  let imgurl = await rp({ url, timeout: 10 * 1000 }).then(success => {
     return 'https://cn.bing.com/' + JSON.parse(success).images[0].url;//可以修改分辨率  .replace('1920x1080', '1366x768') 1280x720
   })
   res.redirect(302, imgurl);

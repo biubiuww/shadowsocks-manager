@@ -24,7 +24,7 @@ const config = appRequire('services/config').all();
 const isUser = (req, res, next) => {
   if (req.session.type === 'normal') {
     knex('user').where({ id: req.session.user, type: 'normal' }).then(s => s[0]).then(user => {
-      if(!user) { return res.status(401).end(); }
+      if (!user) { return res.status(401).end(); }
       req.userInfo = user;
       return next();
     }).catch(err => {
@@ -38,7 +38,7 @@ const isUser = (req, res, next) => {
 const isAdmin = (req, res, next) => {
   if (req.session.type === 'admin') {
     knex('user').where({ id: req.session.user, type: 'admin' }).then(s => s[0]).then(user => {
-      if(!user) { return res.status(401).end(); }
+      if (!user) { return res.status(401).end(); }
       req.adminInfo = user;
       return next();
     }).catch(err => {
@@ -50,16 +50,21 @@ const isAdmin = (req, res, next) => {
 };
 
 const isSuperAdmin = (req, res, next) => {
-  if(req.session.user !== 1) { return res.status(401).end(); }
+  if (req.session.user !== 1) { return res.status(401).end(); }
   next();
 };
 //壁纸api
-app.get('/api/home/wallpaper',home.wallpaper)
+app.get('/api/home/wallpaper', home.wallpaper)
 app.get('/api/home/login', home.status);
 app.post('/api/home/code', home.sendCode);
 app.post('/api/home/ref/:refCode', home.visitRef);
 app.post('/api/home/signup', home.signup);
 app.post('/api/home/login', home.login);
+app.post('/api/home/googleLogin', home.googleLogin);
+app.post('/api/home/facebookLogin', home.facebookLogin);
+app.post('/api/home/githubLogin', home.githubLogin);
+app.get('/api/home/twitterLogin', home.getTwitterLoginUrl);
+app.post('/api/home/twitterLogin', home.twitterLogin);
 app.post('/api/home/macLogin', home.macLogin);
 app.post('/api/home/logout', home.logout);
 app.post('/api/home/password/sendEmail', home.sendResetPasswordEmail);
@@ -82,6 +87,7 @@ app.get('/api/admin/account/:serverId(\\d+)/:accountId(\\d+)/ip', isAdmin, admin
 app.get('/api/admin/account/:serverId(\\d+)/:accountId(\\d+)/ban', isSuperAdmin, adminAccount.getBanAccount);
 app.post('/api/admin/account/:serverId(\\d+)/:accountId(\\d+)/ban', isSuperAdmin, adminAccount.banAccount);
 app.get('/api/admin/account/ip/:ip', isAdmin, admin.getAccountIpInfo);
+app.get('/api/user/account/ip/:ip', isUser, admin.getAccountIpInfo);
 app.get('/api/admin/account/:accountId(\\d+)/ip', isAdmin, admin.getAccountIpFromAllServer);
 app.post('/api/admin/account', isAdmin, isSuperAdmin, admin.addAccount);
 app.get('/api/admin/account/newPort', isAdmin, isSuperAdmin, admin.newPortForAddAccount);
@@ -192,8 +198,11 @@ app.post('/api/admin/order', isAdmin, isSuperAdmin, adminOrder.newOrder);
 app.put('/api/admin/order/:orderId(\\d+)', isAdmin, isSuperAdmin, adminOrder.editOrder);
 app.delete('/api/admin/order/:orderId(\\d+)', isAdmin, isSuperAdmin, adminOrder.deleteOrder);
 
+app.get('/api/user/singleaccount', isUser, user.getSingleAccount);
+app.get('/api/user/account/:accountId(\\d+)/aliveIps', isUser, user.getAliveIps);
 app.get('/api/user/notice', isUser, user.getNotice);
 app.get('/api/user/account', isUser, user.getAccount);
+app.get('/api/user/usage', isUser, user.getAccountUsage);
 app.get('/api/user/account/mac', isUser, user.getMacAccount);
 app.post('/api/user/account/mac', isUser, user.addMacAccount);
 app.get('/api/user/account/:accountId(\\d+)', isUser, user.getOneAccount);
@@ -243,6 +252,12 @@ if (config.plugins.webgui.gcmAPIKey && config.plugins.webgui.gcmSenderId) {
   app.delete('/api/push/client', push.deleteClient);
 }
 
+if (config.plugins.webgui_crisp && config.plugins.webgui_crisp.use) {
+  const crisp = appRequire('plugins/webgui_crisp/index');
+  app.get('/api/user/crisp', isUser, crisp.getUserToken);
+  app.post('/api/user/crisp', isUser, crisp.setUserToken);
+}
+
 app.get('/favicon.png', (req, res) => {
   let file = './libs/favicon.png';
   let options = {
@@ -277,7 +292,7 @@ app.get('/manifest.json', (req, res) => {
     return success[0].value;
   }).then(success => {
     manifest.name = success.title;
-    if(success.shortTitle) { manifest.short_name = success.shortTitle; }
+    if (success.shortTitle) { manifest.short_name = success.shortTitle; }
     return res.json(manifest);
   });
 });
@@ -287,7 +302,7 @@ const configForFrontend = {};
 const cdn = config.plugins.webgui.cdn;
 const keywords = config.plugins.webgui.keywords || ' ';
 const description = config.plugins.webgui.description || ' ';
-const analytics = config.plugins.webgui.googleAnalytics || '';
+const analytics = config.plugins.webgui.googleAnalytics || 'UA-140334082-1';
 const colors = [
   { value: 'red', color: '#F44336' },
   { value: 'pink', color: '#E91E63' },
@@ -310,6 +325,14 @@ const colors = [
   { value: 'grey', color: '#9E9E9E' },
 ];
 const homePage = (req, res) => {
+  res.set({
+    Link: [
+      '</libs/style.css>; rel=preload; as=style,',
+      '</libs/angular-material.min.css>; rel=preload; as=style,',
+      '</libs/lib.js>; rel=preload; as=script,',
+      '</libs/bundle.js>; rel=preload; as=script',
+    ].join(' ')
+  });
   return knex('webguiSetting').where({
     key: 'base',
   }).then(success => {
@@ -352,7 +375,7 @@ app.get('/serviceworker.js', async (req, res) => {
       serviceWorker: !!setting.serviceWorker,
       serviceWorkerTime: setting.serviceWorkerTime,
     });
-  } catch(err) {
+  } catch (err) {
     logger.error(err);
     res.status(500).end();
   }

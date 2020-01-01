@@ -10,7 +10,7 @@ const add = async accountId => {
     await knex('account_flow').insert({
       serverId: server.id,
       accountId,
-      port: accountInfo.port + server.shift,
+      port: accountInfo.is_multi_user > 0 ? accountInfo.port : (accountInfo.port + server.shift),
       nextCheckTime: 0,//优先检查
     });
   };
@@ -43,25 +43,25 @@ const pwd = async (accountId, password) => {
       if (publicKey.includes(':')) {
         publicKey = publicKey.split(':')[0];
       }
-      manager.send({
-        command: 'pwd',
-        port: accountInfo.port + server.shift,
-        password: publicKey,
-      }, {
-          host: server.host,
-          port: server.port,
-          password: server.password,
-        });
+      // manager.send({
+      //   command: 'pwd',
+      //   port: accountInfo.port + server.shift,
+      //   password: publicKey,
+      // }, {
+      //   host: server.host,
+      //   port: server.port,
+      //   password: server.password,
+      // });
     } else {
-      manager.send({
-        command: 'pwd',
-        port: accountInfo.port + server.shift,
-        password,
-      }, {
-          host: server.host,
-          port: server.port,
-          password: server.password,
-        });
+      // manager.send({
+      //   command: 'pwd',
+      //   port: accountInfo.port + server.shift,
+      //   password,
+      // }, {
+      //   host: server.host,
+      //   port: server.port,
+      //   password: server.password,
+      // });
     }
   });
 };
@@ -71,7 +71,7 @@ const edit = async accountId => {
   const accountInfo = await knex('account_plugin').where({ id: accountId }).then(s => s[0]);
   await Promise.all(servers.map(server => {
     return knex('account_flow').update({
-      port: accountInfo.port + server.shift,
+      port: accountInfo.is_multi_user > 0 ? accountInfo.port : (accountInfo.port + server.shift),
       nextCheckTime: 100,//优先检查
     }).where({
       serverId: server.id,
@@ -80,7 +80,16 @@ const edit = async accountId => {
   }));
   return;
 };
-
+const editForLogin = async accountId => {
+  return await knex('account_flow')
+    .update({
+      nextCheckTime: Date.now(),//100,//优先检查
+    })
+    .where({ accountId })
+    .whereNotNull('checkTime')
+    .where('checkTime', '<', Date.now() - 20 * 60 * 1000)
+    .where('nextCheckTime', '>', Date.now());
+};
 const server = async serverId => {
   const server = await knex('server').where({ id: serverId }).then(s => s[0]);
   const accounts = await knex('account_plugin').where({});
@@ -93,12 +102,12 @@ const server = async serverId => {
       await knex('account_flow').insert({
         serverId: server.id,
         accountId: account.id,
-        port: account.port + server.shift,
+        port: account.is_multi_user > 0 ? account.port : (account.port + server.shift),
         nextCheckTime: 200,//优先检查
       });
     } else {
       await knex('account_flow').update({
-        port: account.port + server.shift,
+        port: account.is_multi_user > 0 ? account.port : (account.port + server.shift),
         nextCheckTime: 300,//优先检查
       }).where({
         serverId: server.id,
@@ -127,6 +136,7 @@ exports.add = add;
 exports.del = del;
 exports.pwd = pwd;
 exports.edit = edit;
+exports.editForLogin = editForLogin;
 exports.addServer = server;
 exports.editServer = server;
 exports.updateFlow = updateFlow;

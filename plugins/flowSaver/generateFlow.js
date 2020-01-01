@@ -89,6 +89,31 @@ cron.minute(async () => {
 }, 'RemoveOldFlow', 37);
 
 cron.minute(async () => {
+  logger.info('每3分钟执行一次,设置更新时间');
+  let date = Date.now();
+  let sum = await knex('saveFlow')
+    .sum('flow as sumFlow')
+    .groupBy(['id', 'accountId'])
+    .select(['saveFlow.id as id'])
+    .select(['saveFlow.accountId as accountId'])
+    .whereBetween('time', [date - 180000, date]);
+  for (let item of sum) {
+    let account_flow = await knex('account_flow')
+      .select('nextCheckTime')
+      .where({ 'serverId': item.id, 'accountId': item.accountId })
+      .then(success => success[0]);
+    //只更新流量大于2M并且距下次检查时间大于30分钟的数据
+    if ((account_flow.nextCheckTime - date > 30 * 60 * 1000) && (item.sumFlow > 2 * 1000 * 1000)) {
+      await knex('account_flow').update({
+        nextCheckTime: Date.now()
+      }).where({
+        'accountId': item.accountId,
+        'serverId': item.id
+      });
+    }
+  }
+}, 'UpdateNextCheckTime', 3);
+cron.minute(async () => {
   logger.info('每5分钟执行一次');
   generateFlow('5min');
 }, 'Generate5minFlow', 5);

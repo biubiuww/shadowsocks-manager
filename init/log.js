@@ -27,7 +27,8 @@ const configure = {
   },
   categories: {
     default: { appenders: [ 'console' ], level: 'debug' },
-  }
+  },
+  disableClustering: true,
 };
 
 log4js.configure(configure);
@@ -57,7 +58,7 @@ const setFileAppenders = (filename) => {
     configure.appenders[ctg] = {
       type: 'dateFile',
       filename: path.resolve(logPath, filename, ctg + '.log'),
-      pattern: '-yyyy-MM-dd',
+      pattern: 'yyyy-MM-dd',
       compress: true,
     };
     configure.categories[ctg] = { appenders: [ ctg, 'filter' ], level: 'debug' };

@@ -7,7 +7,7 @@ const dgram = require('dgram');
 const client = dgram.createSocket('udp4');
 const version = appRequire('package').version;
 const exec = require('child_process').exec;
-const http = require('http');
+const https = require('https');
 
 let clientIp = [];
 
@@ -240,47 +240,45 @@ const checkPortRange = (port) => {
 const addAccount = async (port, password) => {
   try {
     if (!checkPortRange(port)) {
-      return Promise.reject('error1');
+      return Promise.reject('error_addAccount1');
     }
     await sendMessage(`add: {"server_port": ${port}, "password": "${password}"}`);
     await knex('account').insert({ port, password });
     return { port, password };
   } catch (err) {
-    return Promise.reject('error2');
+    return Promise.reject('error_addAccount2');
   }
 };
 
 const removeAccount = async (port) => {
   try {
-    const deleteAccount = await knex('account').where({
-      port,
-    }).delete();
-    if (deleteAccount <= 0) {
-      return Promise.reject('error');
-    }
-    await knex('flow').where({
-      port,
-    }).delete();
+    //const deleteAccount = 
+    // if (deleteAccount <= 0) {
+    //   return Promise.reject('error');
+    // }
+    await knex('account').where({ port }).delete();
+    await knex('flow').where({ port }).delete();
     await sendMessage(`remove: {"server_port": ${port}}`);
     return { port };
   } catch (err) {
-    return Promise.reject('error');
+    return Promise.reject('error_removeAccount');
   }
 };
 
 const changePassword = async (port, password) => {
   try {
-    const updateAccount = await knex('account').where({ port }).update({
-      password,
-    });
-    if (updateAccount <= 0) {
-      return Promise.reject('error');
-    }
+    // const updateAccount = await knex('account').where({ port }).update({
+    //   password,
+    // });
+    // if (updateAccount <= 0) {
+    //   return Promise.reject('error');
+    // }
+    await knex('account').where({ port }).update({ password });
     await sendMessage(`remove: {"server_port": ${port}}`);
     await sendMessage(`add: {"server_port": ${port}, "password": "${password}"}`);
     return { port, password };
   } catch (err) {
-    return Promise.reject('error');
+    return Promise.reject('error_changePassword');
   }
 };
 
@@ -289,7 +287,7 @@ const listAccount = async () => {
     const accounts = await knex('account').select(['port as p', 'password as k']);
     return accounts;
   } catch (err) {
-    return Promise.reject('error');
+    return Promise.reject('error_listAccount');
   }
 };
 
@@ -298,7 +296,7 @@ const getAccount = async (port) => {
     const account = await knex('account').select(['port as p', 'password as k']).where('port', port).then(s => s[0]);
     return account;
   } catch (err) {
-    return Promise.reject('error');
+    return Promise.reject('error_getAccount');
   }
 };
 
@@ -328,7 +326,7 @@ const getFlow = async (options) => {
     return accounts;
   } catch (err) {
     logger.error(err);
-    return Promise.reject('error');
+    return Promise.reject('error_getFlow');
   }
 };
 
@@ -337,16 +335,16 @@ let getGfwStatusTime = null;
 const getGfwStatus = () => {
   if (getGfwStatusTime && isGfw === 0 && Date.now() - getGfwStatusTime < 600 * 1000) { return; }
   getGfwStatusTime = Date.now();
-  const sites = [
-    'baidu.com:80',
-  ];
-  const site = sites[+Math.random().toString().substr(2) % sites.length];
-  const req = http.request({
+  let site = 'baidu.com';
+  if(config.isGfwUrl) {
+    site = config.isGfwUrl;
+  }
+  const req = https.request({
     hostname: site.split(':')[0],
-    port: +site.split(':')[1],
+    port: +site.split(':')[1] || 443,
     path: '/',
     method: 'GET',
-    timeout: 2000,
+    timeout: 8000 + isGfw * 2000,
   }, res => {
     if (res.statusCode === 200) {
       isGfw = 0;
@@ -379,7 +377,8 @@ const getIp = port => {
     cmd = `netstat -an | sls -Pattern ':${port} ' | sls -Pattern 'ESTABLISHED' | %{$_.Line.Split(' ',[System.StringSplitOptions]::RemoveEmptyEntries)[2]} | %{$_.Split(':')[0]} | sls -Pattern '127\\.0\\.0\\.1' -NotMatch | unique | %{$_.Line}`;
     shell = 'powershell';
   } else {
-    cmd = `ss -an | grep ':${port} ' | grep ESTAB | awk '{print $6}' | cut -d: -f1 | grep -v 127.0.0.1 | uniq -d`;
+    //cmd = `ss -an | grep ':${port} ' | grep ESTAB | awk '{print $6}' | cut -d: -f1 | grep -v 127.0.0.1 | uniq -d`;
+    cmd = `netstat -tun | grep ":${port}" | grep ESTAB | awk '{print $5}' | cut -d: -f1 | grep -v 127.0.0.1 | uniq -d`;
     shell = '/bin/sh';
   }
   return new Promise((resolve, reject) => {
@@ -397,13 +396,18 @@ const getIp = port => {
   });
 };
 
-const getClientIp = port => {
+const getClientIp = port => {  
+  getIp(+port).then(ips => {
+    ips.forEach(ip => {
+      clientIp.push({ port: +port, time: Date.now(), ip });
+    });
+  });
   clientIp = clientIp.filter(f => {
-    return Date.now() - f.time <= 15 * 60 * 1000;
+    return Date.now() - f.time <= 30 * 60 * 1000;
   });
   const result = [];
   clientIp.filter(f => {
-    return Date.now() - f.time <= 15 * 60 * 1000 && f.port === port;
+    return Date.now() - f.time <= 30 * 60 * 1000 && f.port === port;
   }).map(m => {
     return m.ip;
   }).forEach(f => {

@@ -1,8 +1,8 @@
 module.exports = {
 	Proxy: [],
 	'Proxy Group': [],
-  Rule: [
-    'DOMAIN,gs.apple.com,Proxy',
+	Rule: [
+		'DOMAIN,gs.apple.com,Proxy',
 		'DOMAIN-SUFFIX,mzstatic.com,DIRECT',
 		'DOMAIN-SUFFIX,akadns.net,DIRECT',
 		'DOMAIN-SUFFIX,aaplimg.com,DIRECT',
@@ -168,6 +168,7 @@ module.exports = {
 		'DOMAIN-KEYWORD,usage,REJECT',
 		'DOMAIN-KEYWORD,wlmonitor,REJECT',
 		'DOMAIN-KEYWORD,zjtoolbar,REJECT',
+		'DOMAIN-KEYWORD,n3ro,REJECT',
 		'DOMAIN-SUFFIX,club,REJECT',
 		'DOMAIN-SUFFIX,9to5mac.com,Proxy',
 		'DOMAIN-SUFFIX,abpchina.org,Proxy',
@@ -456,11 +457,11 @@ module.exports = {
 		'IP-CIDR,100.64.0.0/10,DIRECT',
 		'GEOIP,CN,DIRECT',
 		'MATCH,Proxy'
-  ],
-  'allow-lan': false,
-  'external-controller': '127.0.0.1:9090',
-  'log-level': 'info',
-  mode: 'Rule',
-  port: 7890,
-  'socks-port': 1080,
+	],
+	'allow-lan': false,
+	'external-controller': '127.0.0.1:9090',
+	'log-level': 'info',
+	mode: 'Rule',
+	port: 7890,
+	'socks-port': 1080,
 };

@@ -22,7 +22,7 @@ exports.getAccount = (req, res) => {
   account.getAccount({ group }).then(success => {
     success.forEach(account => {
       account.data = JSON.parse(account.data);
-      if(account.type >= 2 && account.type <= 5) {
+      if (account.type >= 2 && account.type <= 5) {
         const time = {
           '2': 7 * 24 * 3600000,
           '3': 30 * 24 * 3600000,
@@ -32,7 +32,7 @@ exports.getAccount = (req, res) => {
         account.data.expire = account.data.create + account.data.limit * time[account.type];
         account.data.from = account.data.create;
         account.data.to = account.data.create + time[account.type];
-        while(account.data.to <= Date.now()) {
+        while (account.data.to <= Date.now()) {
           account.data.from = account.data.to;
           account.data.to = account.data.from + time[account.type];
         }
@@ -62,12 +62,12 @@ exports.getAccountByPort = async (req, res) => {
   try {
     const port = +req.params.port;
     const accountInfo = await account.getAccount({ port }).then(s => s[0]);
-    if(!accountInfo) { return Promise.reject('account not found'); }
-    if(accountInfo.data) {
+    if (!accountInfo) { return Promise.reject('account not found'); }
+    if (accountInfo.data) {
       accountInfo.data = JSON.parse(accountInfo.data);
     }
     res.send(accountInfo);
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
@@ -77,11 +77,11 @@ exports.getOneAccount = async (req, res) => {
   try {
     const accountId = +req.params.accountId;
     const accountInfo = await account.getAccount({ id: accountId }).then(s => s[0]);
-    if(!accountInfo) {
+    if (!accountInfo) {
       return Promise.reject('account not found');
     }
     accountInfo.data = JSON.parse(accountInfo.data);
-    if(accountInfo.type >= 2 && accountInfo.type <= 5) {
+    if (accountInfo.type >= 2 && accountInfo.type <= 5) {
       const time = {
         '2': 7 * 24 * 3600000,
         '3': 30 * 24 * 3600000,
@@ -91,7 +91,7 @@ exports.getOneAccount = async (req, res) => {
       accountInfo.data.expire = accountInfo.data.create + accountInfo.data.limit * time[accountInfo.type];
       accountInfo.data.from = accountInfo.data.create;
       accountInfo.data.to = accountInfo.data.create + time[accountInfo.type];
-      while(accountInfo.data.to <= Date.now()) {
+      while (accountInfo.data.to <= Date.now()) {
         accountInfo.data.from = accountInfo.data.to;
         accountInfo.data.to = accountInfo.data.from + time[accountInfo.type];
       }
@@ -100,8 +100,8 @@ exports.getOneAccount = async (req, res) => {
     }
     accountInfo.publicKey = '';
     accountInfo.privateKey = '';
-    if(accountInfo.key) {
-      if(accountInfo.key.includes(':')) {
+    if (accountInfo.key) {
+      if (accountInfo.key.includes(':')) {
         accountInfo.publicKey = accountInfo.key.split(':')[0];
         accountInfo.privateKey = accountInfo.key.split(':')[1];
       } else {
@@ -110,18 +110,18 @@ exports.getOneAccount = async (req, res) => {
     }
     await accountFlow.edit(accountInfo.id);
     return res.send(accountInfo);
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   };
 };
 
 exports.addAccount = (req, res) => {
-  req.checkBody('port', 'Invalid port').isInt({min: 1, max: 65535});
+  req.checkBody('port', 'Invalid port').isInt({ min: 1, max: 65535 });
   req.checkBody('password', 'Invalid password').notEmpty();
   req.checkBody('time', 'Invalid time').notEmpty();
   req.getValidationResult().then(result => {
-    if(result.isEmpty()) {
+    if (result.isEmpty()) {
       const type = +req.body.type;
       const orderId = +req.body.orderId;
       const port = +req.body.port;
@@ -132,9 +132,11 @@ exports.addAccount = (req, res) => {
       const autoRemove = +req.body.autoRemove || 0;
       const autoRemoveDelay = +req.body.autoRemoveDelay || 0;
       const multiServerFlow = +req.body.multiServerFlow || 0;
+      const is_multi_user = +req.body.is_multi_user || 0;
       const server = req.body.server ? JSON.stringify(req.body.server) : null;
+      const user = req.body.user || null;
       return account.addAccount(type, {
-        port, password, time, limit, flow, autoRemove, autoRemoveDelay, server, multiServerFlow, orderId,
+        port, password, time, limit, flow, autoRemove, autoRemoveDelay, server, multiServerFlow, orderId, is_multi_user, user,
       });
     }
     result.throw();
@@ -157,9 +159,9 @@ exports.deleteAccount = (req, res) => {
 };
 
 exports.changeAccountPort = (req, res) => {
-  req.checkBody('port', 'Invalid port').isInt({min: 1, max: 65535});
+  req.checkBody('port', 'Invalid port').isInt({ min: 1, max: 65535 });
   req.getValidationResult().then(result => {
-    if(result.isEmpty()) {
+    if (result.isEmpty()) {
       const accountId = req.params.accountId;
       const port = +req.body.port;
       return account.changePort(accountId, port);
@@ -188,8 +190,9 @@ exports.changeAccountData = (req, res) => {
     multiServerFlow: +req.body.multiServerFlow,
     server: req.body.server,
     active: 1,
+    is_multi_user: +req.body.is_multi_user || 0
   }).then(success => {
-    if(req.body.cleanFlow) {
+    if (req.body.cleanFlow) {
       flow.cleanAccountFlow(accountId);
     }
     res.send('success');
@@ -232,7 +235,7 @@ exports.getRecentLoginUsers = (req, res) => {
 };
 
 exports.getRecentOrders = (req, res) => {
-  if(!isAlipayUse) {
+  if (!isAlipayUse) {
     return res.send([]);
   }
   const group = req.adminInfo.id === 1 ? -1 : req.adminInfo.group;
@@ -248,7 +251,7 @@ exports.getRecentOrders = (req, res) => {
 };
 
 exports.getPaypalRecentOrders = (req, res) => {
-  if(!isPaypalUse) {
+  if (!isPaypalUse) {
     return res.send([]);
   }
   const group = req.adminInfo.id === 1 ? -1 : req.adminInfo.group;
@@ -300,7 +303,7 @@ exports.deleteUserAccount = (req, res) => {
   const userId = req.params.userId;
   const accountId = req.params.accountId;
   macAccount.getAccountByAccountId(accountId).then(macAccounts => {
-    if(macAccounts.length) {
+    if (macAccounts.length) {
       return res.status(403).end();
     }
     return account.editAccount(accountId, { userId: null });
@@ -313,50 +316,50 @@ exports.deleteUserAccount = (req, res) => {
 };
 
 exports.getUserOrders = (req, res) => {
-  if(!isAlipayUse) {
+  if (!isAlipayUse) {
     return res.send([]);
   }
   const options = {
     userId: +req.params.userId,
   };
   alipay.orderList(options)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getUserRefOrders = (req, res) => {
   const userId = +req.params.userId;
   refOrder.getUserOrders(userId)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getPaypalUserOrders = (req, res) => {
-  if(!isPaypalUse) {
+  if (!isPaypalUse) {
     return res.send([]);
   }
   const options = {
     userId: +req.params.userId,
   };
   paypal.orderList(options)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getOrders = (req, res) => {
-  if(!isAlipayUse) {
+  if (!isAlipayUse) {
     return res.send({
       maxPage: 0,
       page: 1,
@@ -366,7 +369,7 @@ exports.getOrders = (req, res) => {
     });
   }
   const options = {};
-  if(req.adminInfo.id === 1) {
+  if (req.adminInfo.id === 1) {
     options.group = +req.query.group;
   } else {
     options.group = req.adminInfo.group;
@@ -377,20 +380,20 @@ exports.getOrders = (req, res) => {
   options.sort = req.query.sort || 'alipay.createTime_desc';
   options.start = req.query.start;
   options.end = req.query.end;
-  
-  options.filter = ( Array.isArray(req.query.filter) ? req.query.filter : [req.query.filter] ) || [];
+
+  options.filter = (Array.isArray(req.query.filter) ? req.query.filter : [req.query.filter]) || [];
   alipay.orderListAndPaging(options)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getCsvOrders = async (req, res) => {
   const options = {};
-  if(req.adminInfo.id === 1) {
+  if (req.adminInfo.id === 1) {
     options.group = +req.query.group;
   } else {
     options.group = req.adminInfo.group;
@@ -400,23 +403,23 @@ exports.getCsvOrders = async (req, res) => {
   options.start = req.query.start;
   options.end = req.query.end;
 
-  options.filter = ( Array.isArray(req.query.filter) ? req.query.filter : [req.query.filter] ) || [];
+  options.filter = (Array.isArray(req.query.filter) ? req.query.filter : [req.query.filter]) || [];
   alipay.getCsvOrder(options)
-  .then(success => {
-    res.setHeader('Content-disposition', 'attachment; filename=download.csv');
-    res.setHeader('Content-type', 'text/csv');
-    res.send(success.map(m => {
-      return `${ m.orderId }, ${ m.amount }, ${ m.username }`;
-    }).join('\r\n'));
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.setHeader('Content-disposition', 'attachment; filename=download.csv');
+      res.setHeader('Content-type', 'text/csv');
+      res.send(success.map(m => {
+        return `${m.orderId}, ${m.amount}, ${m.username}`;
+      }).join('\r\n'));
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getRefOrders = (req, res) => {
   const options = {};
-  if(req.adminInfo.id === 1) {
+  if (req.adminInfo.id === 1) {
     options.group = +req.query.group;
   } else {
     options.group = req.adminInfo.group;
@@ -427,19 +430,19 @@ exports.getRefOrders = (req, res) => {
   options.sort = req.query.sort || 'webgui_ref_time.createTime_desc';
   options.start = req.query.start;
   options.end = req.query.end;
-  
+
   options.filter = req.query.filter || '';
   refOrder.orderListAndPaging(options)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getPaypalOrders = (req, res) => {
-  if(!isPaypalUse) {
+  if (!isPaypalUse) {
     return res.send({
       maxPage: 0,
       page: 1,
@@ -449,7 +452,7 @@ exports.getPaypalOrders = (req, res) => {
     });
   }
   const options = {};
-  if(req.adminInfo.id === 1) {
+  if (req.adminInfo.id === 1) {
     options.group = +req.query.group;
   } else {
     options.group = req.adminInfo.group;
@@ -463,12 +466,12 @@ exports.getPaypalOrders = (req, res) => {
 
   options.filter = req.query.filter || '';
   paypal.orderListAndPaging(options)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.getPaypalCsvOrders = async (req, res) => {
@@ -492,7 +495,7 @@ exports.sendUserEmail = (req, res) => {
   req.checkBody('title', 'Invalid title').notEmpty();
   req.checkBody('content', 'Invalid content').notEmpty();
   req.getValidationResult().then(result => {
-    if(result.isEmpty()) {
+    if (result.isEmpty()) {
       return user.getOne(userId).then(user => user.email);
     }
     result.throw();
@@ -515,7 +518,7 @@ exports.getAccountIp = (req, res) => {
   knex('server').select().where({
     id: serverId,
   }).then(success => {
-    if(success.length) {
+    if (success.length) {
       serverInfo = success[0];
     } else {
       return Promise.reject('server not found');
@@ -564,7 +567,7 @@ exports.getAccountIpFromAllServer = (req, res) => {
     const result = [];
     ips.forEach(ip => {
       ip.forEach(i => {
-        if(result.indexOf(i) < 0) { result.push(i); }
+        if (result.indexOf(i) < 0) { result.push(i); }
       });
     });
     return res.send({ ip: result });
@@ -578,24 +581,24 @@ exports.getAccountIpInfo = (req, res) => {
   const ip = req.params.ip;
 
   const taobao = ip => {
-    const uri = `http://ip.taobao.com/service/getIpInfo.php?ip=${ ip }`;
-    return rp({ uri, timeout: 10 * 1000 }).then(success => {
+    const uri = `http://ip.taobao.com/service/getIpInfo.php?ip=${ip}`;
+    return rp({ uri, timeout: 3 * 1000 }).then(success => {
       const decode = (s) => {
         return unescape(s.replace(/\\u/g, '%u'));
       };
       return JSON.parse(decode(success));
     }).then(success => {
-      if(success.code !== 0) {
+      if (success.code !== 0) {
         return Promise.reject(success.code);
       }
-      const result = [success.data.region + success.data.city, success.data.isp];
+      const result = [success.data.region + (success.data.region === success.data.city ? '' : success.data.city), success.data.isp];
       return result;
     });
   };
 
   const sina = ip => {
-    const uri = `https://int.dpool.sina.com.cn/iplookup/iplookup.php?format=js&ip=${ ip }`;
-    return rp({ uri, timeout: 10 * 1000 }).then(success => {
+    const uri = `https://int.dpool.sina.com.cn/iplookup/iplookup.php?format=js&ip=${ip}`;
+    return rp({ uri, timeout: 3 * 1000 }).then(success => {
       const decode = (s) => {
         return unescape(s.replace(/\\u/g, '%u'));
       };
@@ -607,8 +610,8 @@ exports.getAccountIpInfo = (req, res) => {
   };
 
   const ipip = ip => {
-    const uri = `https://freeapi.ipip.net/${ ip }`;
-    return rp({ uri, timeout: 10 * 1000 }).then(success => {
+    const uri = `https://freeapi.ipip.net/${ip}`;
+    return rp({ uri, timeout: 3 * 1000 }).then(success => {
       const decode = (s) => {
         return unescape(s.replace(/\\u/g, '%u'));
       };
@@ -618,7 +621,6 @@ exports.getAccountIpInfo = (req, res) => {
       return result;
     });
   };
-
   const getIpFunction = ip => {
     return taobao(ip).catch(() => {
       return sina(ip);
@@ -627,11 +629,11 @@ exports.getAccountIpInfo = (req, res) => {
     });
   };
   getIpFunction(ip)
-  .then(success => {
-    return res.send(success);
-  }).catch(err => {
-    return res.send(['', '']);
-  });
+    .then(success => {
+      return res.send(success);
+    }).catch(err => {
+      return res.send(['', '']);
+    });
 };
 
 exports.getAllMacAccount = (req, res) => {
@@ -660,50 +662,50 @@ exports.newPortForAddAccount = async (req, res) => {
     const port = await knex('webguiSetting').select().where({
       key: 'account',
     }).then(success => {
-      if(!success.length) { return Promise.reject('settings not found'); }
+      if (!success.length) { return Promise.reject('settings not found'); }
       success[0].value = JSON.parse(success[0].value);
       return success[0].value.port;
     });
-    if(port.random) {
+    if (port.random) {
       const getRandomPort = () => Math.floor(Math.random() * (port.end - port.start + 1) + port.start);
       let retry = 0;
       let myPort = getRandomPort();
       const checkIfPortExists = port => {
         let myPort = port;
         return knex('account_plugin').select()
-        .where({ port }).then(success => {
-          if(success.length && retry <= 30) {
-            retry++;
-            myPort = getRandomPort();
-            return checkIfPortExists(myPort);
-          } else if (success.length && retry > 30) {
-            return Promise.reject('Can not get a random port');
-          } else {
-            return myPort;
-          }
-        });
+          .where({ port }).then(success => {
+            if (success.length && retry <= 30) {
+              retry++;
+              myPort = getRandomPort();
+              return checkIfPortExists(myPort);
+            } else if (success.length && retry > 30) {
+              return Promise.reject('Can not get a random port');
+            } else {
+              return myPort;
+            }
+          });
       };
       newPort = await checkIfPortExists(myPort);
     } else {
       newPort = await knex('account_plugin').select()
-      .whereBetween('port', [port.start, port.end])
-      .orderBy('port', 'ASC').then(success => {
-        const portArray = success.map(m => m.port);
-        let myPort;
-        for(let p = port.start; p <= port.end; p++) {
-          if(portArray.indexOf(p) < 0) {
-            myPort = p; break;
+        .whereBetween('port', [port.start, port.end])
+        .orderBy('port', 'ASC').then(success => {
+          const portArray = success.map(m => m.port);
+          let myPort;
+          for (let p = port.start; p <= port.end; p++) {
+            if (portArray.indexOf(p) < 0) {
+              myPort = p; break;
+            }
           }
-        }
-        if(myPort) {
-          return myPort;
-        } else {
-          return Promise.reject('no port');
-        }
-      });
+          if (myPort) {
+            return myPort;
+          } else {
+            return Promise.reject('no port');
+          }
+        });
     }
     res.send({ port: newPort });
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
@@ -722,12 +724,12 @@ exports.getRefUserById = (req, res) => {
 exports.getRefCodeById = (req, res) => {
   const userId = +req.params.userId;
   refUser.getRefCode(userId)
-  .then(success => {
-    res.send(success);
-  }).catch(err => {
-    console.log(err);
-    res.status(403).end();
-  });
+    .then(success => {
+      res.send(success);
+    }).catch(err => {
+      console.log(err);
+      res.status(403).end();
+    });
 };
 
 exports.addRefCodeForUser = async (req, res) => {
@@ -735,22 +737,22 @@ exports.addRefCodeForUser = async (req, res) => {
     const userId = +req.params.userId;
     const number = req.body.number;
     const max = req.body.max;
-    for(let i = 0; i < number; i++) {
+    for (let i = 0; i < number; i++) {
       await refUser.addRefCode(userId, max);
     }
     res.send('success');
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
 };
 
-exports.deleteRefCode = async (req ,res) => {
+exports.deleteRefCode = async (req, res) => {
   try {
     const code = req.params.code;
     await refUser.deleteRefCode(code);
     res.send('success');
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
@@ -762,7 +764,7 @@ exports.deleteRefUser = async (req, res) => {
     const refUserId = +req.params.refUserId;
     await refUser.deleteRefUser(sourceUserId, refUserId);
     res.send('success');
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
@@ -774,7 +776,7 @@ exports.alipayRefund = async (req, res) => {
     const amount = req.body.amount;
     const result = await alipay.refund(orderId, amount);
     res.send(result);
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
@@ -795,7 +797,7 @@ exports.getAccountAndPaging = async (req, res) => {
       filter,
     });
     return res.send(accounts);
-  } catch(err) {
+  } catch (err) {
     console.log(err);
     res.status(403).end();
   }
