@@ -217,14 +217,14 @@ const v2ray = (account, server) => {
 // v2 Quan
 const v2_quan = (account, server, title) => {
   server.v2rayMethod = server.v2rayMethod == 'auto' ? 'chacha20-ietf-poly1305' : (server.v2rayMethod || 'none');
-  return 'vmess://' + urlsafeBase64(`${server.name}=vmess,${server.host},${server.v2rayPort},${server.v2rayMethod},"${account.uuid}",group=${title},over-tls=${!!server.v2rayTLS},certificate=${server.v2rayTLS || 0},obfs=${server.v2rayNet || 'tcp'},obfs-path="${server.v2rayPath || ''}",obfs-header="Host: ${server.host}[Rr][Nn]User-Agent: Test Agent"`);
+  return 'vmess://' + urlsafeBase64(`${server.name}=vmess,${server.host},${server.v2rayPort},${server.v2rayMethod},"${account.uuid}",group=${title},over-tls=${!!server.v2rayTLS},tls-host=${server.v2rayHost || server.host},certificate=${server.v2rayTLS || 0},obfs=${server.v2rayNet || 'tcp'},obfs-path="${server.v2rayPath || ''}",obfs-header="Host: ${server.v2rayHost || server.host}[Rr][Nn]User-Agent: Test Agent"`);
 }
 // v2 QuanX
 const quanx_obfs = { ws: 'wss', tcp: 'over-tls' };
 const v2_quanx = (account, server) => {
   server.v2rayMethod = server.v2rayMethod == 'auto' ? 'chacha20-ietf-poly1305' : (server.v2rayMethod || 'none');
   server.v2rayNet = quanx_obfs[server.v2rayNet] || 'over-tls';
-  return `vmess=${server.host}:${server.v2rayPort},method=${server.v2rayMethod},password=${account.uuid},obfs=${server.v2rayNet}${server.v2rayNet == 'wss' ? ',obfs-uri=' + server.v2rayPath : ''},fast-open=false,udp-relay=false,tag=${server.name}`;
+  return `vmess=${server.host}:${server.v2rayPort},method=${server.v2rayMethod},password=${account.uuid},obfs=${server.v2rayNet}${server.v2rayNet == 'wss' ? ',obfs-host=' + (server.v2rayHost || server.host) + ',obfs-uri=' + server.v2rayPath : ''},fast-open=false,udp-relay=false,tag=${server.name}`;
 }
 //SS 默认链接
 const ss = (account, server) => {
@@ -344,7 +344,8 @@ exports.getSubscribeAccountForUser = async (req, res) => {
         method: 'chacha20',
         host: '127.0.0.1',
         shift: 1,
-        v2rayPort: 80
+        v2rayPort: 80,
+        show: true
       };
       let tip = {};
       if (accountInfo.type == 1) {
@@ -360,9 +361,11 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             tip.stop = '流量耗尽，请购买流量包';
           }
         } else {
+          tip_flow.show = false;
           if (flowInfo[0] > (accountInfo.data.flow + accountInfo.data.flowPack)) {
             tip_flow.name = '已封停，请联系管理员';
             tip.stop = '已封停，请联系管理员';
+            tip_flow.show = true;
           }
         }
       } else {
@@ -375,9 +378,11 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             tip.stop = '流量耗尽，请购买流量包';
           }
         } else {
+          tip_flow.show = false;
           if (flowInfo[0] > (accountInfo.data.flow + accountInfo.data.flowPack)) {
             tip_flow.name = '已封停，请联系管理员';
             tip.stop = '已封停，请联系管理员';
+            tip_flow.show = true;
           }
         }
       }
@@ -422,6 +427,9 @@ exports.getSubscribeAccountForUser = async (req, res) => {
           const clashConfig = appRequire('plugins/webgui/server/clash');
           clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
           subscribeAccount.server.unshift(tip_date);
+          if (tip_flow.show) {
+            subscribeAccount.server.unshift(tip_flow);
+          }
           let cs = { Proxy: [], proxies: [] };
           subscribeAccount.server.map(server => {
             if (server.v2ray) {
@@ -447,7 +455,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
           //   }
           // }
           res.setHeader('Content-Type', ' text/plain;charset=utf-8');
-          res.setHeader("Content-Disposition", `attachment; filename=${encodeURIComponent(baseSetting.title)}.yaml`);
+          res.setHeader("Content-Disposition", `attachment; filename=${encodeURIComponent(baseSetting.title + accountInfo.port)}.yaml`);
           var dataBuffer = Buffer.concat([Buffer.from('\xEF\xBB\xBF', 'binary'), Buffer.from(yaml.safeDump(clashConfig))]);
           return res.send(dataBuffer);
         }
@@ -534,6 +542,9 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             const yaml = require('js-yaml');
             const clashConfig = appRequire('plugins/webgui/server/clash');
             subscribeAccount.server.unshift(tip_date);
+            if (tip_flow.show) {
+              subscribeAccount.server.unshift(tip_flow);
+            }
             clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
             let cs = { Proxy: [], proxies: [] };
             subscribeAccount.server.map(server => {
@@ -560,7 +571,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             // }
             //return res.send(yaml.safeDump(clashConfig));
             res.setHeader('Content-Type', ' text/plain;charset=utf-8');
-            res.setHeader("Content-Disposition", `attachment; filename=${encodeURIComponent(baseSetting.title)}.yaml`);
+            res.setHeader("Content-Disposition", `attachment; filename=${encodeURIComponent(baseSetting.title + accountInfo.port)}.yaml`);
             //var dataBuffer = Buffer.concat([Buffer.from('\xEF\xBB\xBF', 'binary'), Buffer.from(yaml.safeDump(clashConfig))]);
             return res.send(Buffer.from(yaml.safeDump(clashConfig)));
           }
@@ -570,7 +581,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
           for (const s of subscribeAccount.server) {
             if (s.v2ray === 1 || s.flag) {
               if (app === 'quan') {
-                result += v2_quan(accountInfo, s, `${baseSetting.title}[${config.plugins.webgui.site.split('//')[1] || config.plugins.webgui.site}]`) + '\r\n';
+                result += v2_quan(accountInfo, s, `${baseSetting.title + accountInfo.port}[${config.plugins.webgui.site.split('//')[1] || config.plugins.webgui.site}]`) + '\r\n';
               } else if (app === 'quanx') {
                 result += v2_quanx(accountInfo, s) + '\r\n';
               } else {
