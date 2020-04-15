@@ -151,9 +151,9 @@ const splitTime = async (start, end) => {
   const now = Date.now();
   const getMinute = moment(now).get('minute');
   const splitEnd = {
-    day: moment(now).hour(0).minute(0).second(0).millisecond(0).toDate().getTime(),
-    hour: moment(now).minute(0).second(0).millisecond(0).toDate().getTime(),
-    fiveMin: moment(now).minute(getMinute - getMinute % 5).second(0).millisecond(0).toDate().getTime(),
+    day: moment(now).hour(0).minute(0).second(0).millisecond(0).toDate().valueOf(),
+    hour: moment(now).minute(0).second(0).millisecond(0).valueOf(),
+    fiveMin: moment(now).minute(getMinute - getMinute % 5).second(0).millisecond(0).valueOf(),
   };
   const isDay = time => {
     const hour = moment(time).get('hour');
@@ -185,20 +185,21 @@ const splitTime = async (start, end) => {
   };
   const next = (time, type) => {
     if (type === 'day') {
-      return moment(time).add(1, 'days').hour(0).minute(0).second(0).millisecond(0).toDate().getTime();
+      return moment(time).add(1, 'days').hour(0).minute(0).second(0).millisecond(0).valueOf()
     }
     if (type === 'hour') {
-      return moment(time).add(1, 'hours').minute(0).second(0).millisecond(0).toDate().getTime();
+      return moment(time).add(1, 'hours').minute(0).second(0).millisecond(0).valueOf()
     }
     if (type === '5min') {
       const getMinute = moment(time).get('minute');
-      return moment(time).minute(getMinute - getMinute % 5).add(5, 'minutes').second(0).millisecond(0).toDate().getTime();
+      return moment(time).minute(getMinute - getMinute % 5).add(5, 'minutes').second(0).millisecond(0).valueOf()
     }
   };
   let timeStart = start;
   let timeEnd = end;
   let last = 'origin';
-  while (timeStart < timeEnd) {
+  let i = 0;
+  while (timeStart < timeEnd && i < 50) {
     if (isDay(timeStart) && next(timeStart, 'day') <= splitEnd.day && next(timeStart, 'day') <= end) {
       if (last === 'day' && time.day.length) {
         const length = time.day.length;
@@ -244,6 +245,7 @@ const splitTime = async (start, end) => {
       timeStart = timeEnd;
       last = 'origin';
     }
+    i += 1;
   }
   return time;
 };
@@ -544,7 +546,7 @@ const getTopFlow = groupId => {
   const endTime = Date.now();
   const where = {};
   if (groupId >= 0) { where['user.group'] = groupId; }
-  return knex('saveFlow').sum('saveFlow.flow as sumFlow')
+  return knex('saveFlowHour').sum('saveFlowHour.flow as sumFlow')
     .groupBy('user.id')
     .orderBy('sumFlow', 'desc')
     .limit(10)
@@ -555,9 +557,9 @@ const getTopFlow = groupId => {
       'account_plugin.port as port',
       'account_plugin.id as accountId',
     ])
-    .leftJoin('account_plugin', 'account_plugin.id', 'saveFlow.accountId')
+    .leftJoin('account_plugin', 'account_plugin.id', 'saveFlowHour.accountId')
     .innerJoin('user', 'account_plugin.userId', 'user.id')
-    .whereBetween('saveFlow.time', [startTime, endTime]).where(where);
+    .whereBetween('saveFlowHour.time', [startTime, endTime]).where(where);
 };
 
 const cleanAccountFlow = async id => {

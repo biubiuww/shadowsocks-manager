@@ -169,7 +169,8 @@ module.exports = {
 		'DOMAIN-KEYWORD,wlmonitor,REJECT',
 		'DOMAIN-KEYWORD,zjtoolbar,REJECT',
 		'DOMAIN-KEYWORD,n3ro,REJECT',
-		'DOMAIN-SUFFIX,club,REJECT',
+		'DOMAIN-KEYWORD,sy168,REJECT',
+		'DOMAIN-SUFFIX,as64271.net,REJECT',
 		'DOMAIN-SUFFIX,9to5mac.com,Proxy',
 		'DOMAIN-SUFFIX,abpchina.org,Proxy',
 		'DOMAIN-SUFFIX,adblockplus.org,Proxy',
@@ -463,5 +464,5 @@ module.exports = {
 	'log-level': 'info',
 	mode: 'Rule',
 	port: 7890,
-	'socks-port': 1080,
+	'socks-port': 7891
 };

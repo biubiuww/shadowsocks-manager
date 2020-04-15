@@ -35,7 +35,7 @@ const day_push = async (flag) => {
   //提醒前一天
   if (flag === 1) {
     end_time = begin_time;
-    begin_time = moment(new Date()).add(-1,'d').hour(0).minute(0).second(0).millisecond(0).toDate().getTime();
+    begin_time = moment(new Date()).add(-1, 'd').hour(0).minute(0).second(0).millisecond(0).toDate().getTime();
   }
   //当日登录用户数
   const login = await knex('user').count('id as count').whereNot({
@@ -46,19 +46,19 @@ const day_push = async (flag) => {
   }).whereBetween('createTime', [begin_time, end_time]).then(success => success[0].count);
   //总账号数
   const total_info = await knex('account_plugin').countDistinct('id as count').then(success => success[0]);
-  //当日使用端口数
-  const today_info = await knex('saveFlow').countDistinct('accountId as count').whereBetween('time', [begin_time, end_time]).then(success => success[0]);
+  //当日使用用户数
+  const today_info = await knex('saveFlowHour').countDistinct('accountId as count').whereBetween('time', [begin_time, end_time - 1]).then(success => success[0]);
   //当日更新订阅数
   const subscribe_info = await knex('account_plugin').count('id as count').whereBetween('lastSubscribeTime', [begin_time, end_time]).then(success => success[0]);
   //总流量
   //各个服务器使用情况
-  const server_info = await knex('saveFlow')
-    .leftJoin('server', 'saveFlow.id', 'server.id')
-    .countDistinct('saveFlow.accountId as count')
-    .sum('saveFlow.flow as sumflow')
+  const server_info = await knex('saveFlowHour')
+    .leftJoin('server', 'saveFlowHour.id', 'server.id')
+    .countDistinct('saveFlowHour.accountId as count')
+    .sum('saveFlowHour.flow as sumflow')
     .select('server.name')
-    .groupBy('saveFlow.id')
-    .whereBetween('time', [begin_time, end_time])
+    .groupBy('saveFlowHour.id')
+    .whereBetween('time', [begin_time, end_time - 1])
     .orderBy('sumflow', 'desc')
     .then(success => {
       let allflow = 0;

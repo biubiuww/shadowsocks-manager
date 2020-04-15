@@ -141,10 +141,18 @@ const list = async (options = {}) => {
       } else {
         last = moment(moment().format('YYYY-MM') + '-' + (server.resetday < 10 ? '0' + server.resetday : server.resetday)).startOf('day').valueOf();
       }
-      server['useflow'] = await knex('saveFlowHour')
+      //0409修改后 这是只统计到昨天
+      let yesterday = await knex('saveFlowDay')
         .sum(`flow as sumFlow`)
         .where({ id: server.id })
         .whereBetween(`time`, [last, now]).then(res => res[0].sumFlow || 0);
+      //今天的
+      let t = moment(last).startOf('day').valueOf();
+      let today = await knex('saveFlowHour')
+        .sum(`flow as sumFlow`)
+        .where({ id: server.id })
+        .whereBetween(`time`, [t, now]).then(res => res[0].sumFlow || 0);
+      server['useflow'] = yesterday + today;
     }
     // serverList.forEach((server, index) => {
     //   serverStatus.push(getServerStatus(server, index));

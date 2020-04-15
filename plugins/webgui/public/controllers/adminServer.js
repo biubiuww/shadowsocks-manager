@@ -78,15 +78,15 @@ app.controller('AdminServerController', ['$scope', '$http', '$state', 'moment', 
             server.useFlowStr = $filter('flowNum2Str')(servers[index].useflow);
             server.monthFlowStr = $filter('flowNum2Str')(servers[index].monthflow);
             server.singleMode = servers[index].singleMode;
-            adminApi.getServerFlow(server.id).then(flow => {
-              if (!server.flow) {
-                server.flow = {};
-              }
-              server.flow.today = flow.today;
-              server.flow.week = flow.week;
-              server.flow.month = flow.month;
-            });
             if ($scope.serverChart.showChart) {
+              adminApi.getServerFlow(server.id).then(flow => {
+                if (!server.flow) {
+                  server.flow = {};
+                }
+                server.flow.today = flow.today;
+                server.flow.week = flow.week;
+                server.flow.month = flow.month;
+              });
               $timeout(() => {
                 adminApi.getServerFlowLastHour(server.id)
                   .then(success => {
@@ -110,12 +110,12 @@ app.controller('AdminServerController', ['$scope', '$http', '$state', 'moment', 
           };
           $scope.servers = servers;
           $scope.servers.forEach((server, index) => {
-            adminApi.getServerFlow(server.id).then(flow => {
-              server.flow = flow;
-              server.useFlowStr = $filter('flowNum2Str')(server.useflow);
-              server.monthFlowStr = $filter('flowNum2Str')(server.monthflow);
-            });
             if ($scope.serverChart.showChart) {
+              adminApi.getServerFlow(server.id).then(flow => {
+                server.flow = flow;
+                server.useFlowStr = $filter('flowNum2Str')(server.useflow);
+                server.monthFlowStr = $filter('flowNum2Str')(server.monthflow);
+              });
               $timeout(() => {
                 adminApi.getServerFlowLastHour(server.id)
                   .then(success => {
@@ -147,7 +147,7 @@ app.controller('AdminServerController', ['$scope', '$http', '$state', 'moment', 
       if (document.visibilityState === 'visible' && $localStorage.admin.serverInfo && Date.now() - $localStorage.admin.serverInfo.time >= 90 * 1000) {
         updateServerInfo();
       }
-    }, 30 * 1000));
+    }, 5 * 60 * 1000));
     $scope.toServerPage = (serverId) => {
       $state.go('admin.serverPage', { serverId });
     };

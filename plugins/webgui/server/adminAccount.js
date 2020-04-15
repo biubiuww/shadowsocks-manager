@@ -183,7 +183,7 @@ const v2_clash = (account, server) => {
     alterId: server.v2rayAID || 0,
     cipher: server.v2rayMethod || 'auto',
     udp: true,
-    'skip-cert-verify': false
+    'skip-cert-verify': true
   };
   if (server.v2rayNet && server.v2rayNet != 'tcp') v2['network'] = server.v2rayNet;
   if (server.v2rayTLS) v2['tls'] = true;
@@ -236,6 +236,7 @@ const ssr = (account, server) => {
 }
 
 exports.getSubscribeAccountForUser = async (req, res) => {
+  //console.log('sub-req',req['headers']);
   try {
     let type = req.query.type;
     type = type ? type.toLowerCase() : '';
@@ -425,7 +426,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
         if (app === 'clash') {
           const yaml = require('js-yaml');
           const clashConfig = appRequire('plugins/webgui/server/clash');
-          clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
+          //clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
           subscribeAccount.server.unshift(tip_date);
           if (tip_flow.show) {
             subscribeAccount.server.unshift(tip_flow);
@@ -545,7 +546,7 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             if (tip_flow.show) {
               subscribeAccount.server.unshift(tip_flow);
             }
-            clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
+            //clashConfig.dns = { enable: true, nameserver: ['119.29.29.29', '223.5.5.5'] }
             let cs = { Proxy: [], proxies: [] };
             subscribeAccount.server.map(server => {
               if (server.v2ray || server.flag) {
@@ -558,6 +559,13 @@ exports.getSubscribeAccountForUser = async (req, res) => {
             clashConfig['Proxy Group'][0] = {
               name: 'Proxy',
               type: 'select',
+              proxies: ['自动选择'].concat(cs.proxies),
+            };
+            clashConfig['Proxy Group'][1] = {
+              name: '自动选择',
+              type: 'url-test',
+              url: 'http://www.gstatic.com/generate_204',
+              interval: 300,
               proxies: cs.proxies,
             };
             // for (const key in clash_group) {
